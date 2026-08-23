@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: PR Agent review
-        uses: qodo-agent/pr-agent@main
+        uses: qodo-ai/pr-agent@main
         env:
           # --- GitHub ---
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
