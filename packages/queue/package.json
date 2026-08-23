@@ -1,0 +1,9 @@
+{
+  "name": "@grabit/queue",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "bullmq": "^5.30.0"
+  }
+}

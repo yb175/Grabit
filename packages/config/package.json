@@ -1,0 +1,6 @@
+{
+  "name": "@grabit/config",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts"
+}

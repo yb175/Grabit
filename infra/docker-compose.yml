@@ -1,0 +1,32 @@
+# Grabit infra — local dev stack.
+#
+# Grabit is an AI Payment Revenue Recovery system (Razorpay AI Buildathon,
+# Track 03). This compose file brings up the backing services for local dev:
+# Postgres (recovery data + ledger), Redis (BullMQ queues), and the Python
+# AI agent. API and workers run from the host with pnpm during development.
+#
+# Start: docker compose -f infra/docker-compose.yml up -d
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: grabit
+      POSTGRES_PASSWORD: grabit
+      POSTGRES_DB: grabit
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6380:6379"
+
+  ai-agent:
+    build: ../apps/ai-agent
+    ports:
+      - "8001:8001"
+
+volumes:
+  pgdata:

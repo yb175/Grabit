@@ -1,0 +1,4 @@
+# Agno agent framework — powers Grabit's failure-diagnosis agents.
+agno
+fastapi
+uvicorn[standard]

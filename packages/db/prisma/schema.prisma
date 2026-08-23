@@ -1,0 +1,26 @@
+// Grabit Prisma schema.
+//
+// Eventually contains the full data model for revenue recovery:
+//  - PaymentFailure   : ingested failed payment / autopay events (from Razorpay webhooks)
+//  - RecoveryAttempt  : state machine per failure (pending -> diagnosing -> contacting -> recovered/abandoned/escalated)
+//  - MessageLog       : every WhatsApp recovery message sent (with AI-generated copy)
+//  - HitlTask         : human-in-the-loop review queue for high-value / unclear cases
+//  - LedgerEntry      : recovered-amount ledger powering the dashboard
+//  - AuditLog         : immutable trail of every decision the system made
+//
+// Chunk 1 keeps it minimal: a HealthCheck model just to prove the database
+// connection works. Replace with the real schema in Chunk 2.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model HealthCheck {
+  id        Int      @id @default(autoincrement())
+  checkedAt DateTime @default(now())
+}

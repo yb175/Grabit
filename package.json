@@ -1,0 +1,8 @@
+{
+  "name": "grabit",
+  "private": true,
+  "scripts": {
+    "dev:api": "pnpm --filter @grabit/api dev",
+    "dev:worker": "pnpm --filter @grabit/worker dev"
+  }
+}

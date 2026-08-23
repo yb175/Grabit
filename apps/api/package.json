@@ -1,0 +1,18 @@
+{
+  "name": "@grabit/api",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@grabit/config": "workspace:*",
+    "@grabit/db": "workspace:*",
+    "@hono/node-server": "^2.1.1",
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}
