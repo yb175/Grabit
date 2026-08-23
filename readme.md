@@ -65,6 +65,9 @@ Grabit closes the loop:
 
 ---
 
+## Database Schema 
+![Db Schema](./docs/db_schema.png)
+
 ## Tech Stack
 
 | Layer              | Choice                          |
