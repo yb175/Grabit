@@ -7,11 +7,16 @@
 //  - ledger amount calculation helpers
 //
 // Chunk 1: just the shared failure-type enum.
+// Values match the Prisma FailureType enum exactly (packages/db) so the
+// core union and the DB enum are interchangeable without mapping.
 export const FAILURE_TYPES = [
-  'HARD',
-  'SOFT',
-  'AUTOPAY_FAILED',
-  'AUTOPAY_CANCELLED',
+  'hard',
+  'soft',
+  'autopay_failed',
+  'autopay_cancelled',
 ] as const
 
 export type FailureType = (typeof FAILURE_TYPES)[number]
+
+// Razorpay domain: event types, whitelist, classification rules.
+export * from './razorpay.js'

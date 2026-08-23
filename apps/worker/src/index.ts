@@ -1,20 +1,29 @@
 // Grabit Worker — entrypoint.
 //
-// Grabit is an AI Payment Revenue Recovery system. This service runs the
-// BullMQ workers that make up the recovery pipeline:
+// Runs the BullMQ workers that make up the recovery pipeline:
+//   ingest   : webhook event -> persisted failed_payment + recovery_job
+//   recovery : AI diagnosis + action/timing decision   (next slice)
+//   message  : send WhatsApp recovery message           (later)
+//   followup : smart-scheduled retries                  (later)
+//   hitl     : escalate to a human                      (later)
 //
-//   ingest.worker   : webhook event -> persisted PaymentFailure record
-//   recovery.worker : AI diagnosis (Hard/Soft/Autopay Failed/Cancelled) + action + timing decision
-//   message.worker  : send personalized WhatsApp one-click recovery message
-//   followup.worker : smart-scheduled retries, enforcing stopping rules
-//   hitl.worker     : escalate ambiguous/high-value cases to a human
-//
-// Chunk 1: boots and reports Redis connectivity only. Workers get wired in
-// Chunk 2 once Redis + queues are live.
+// Graceful shutdown on SIGINT/SIGTERM: stop taking jobs, let in-flight ones
+// finish, close Prisma, exit.
+
+import { prisma } from '@grabit/db'
 import { config } from '@grabit/config'
+import { startIngestWorker } from './workers/ingest.worker.js'
 
 console.log(`[grabit-worker] starting (redis: ${config.redisUrl})`)
-console.log('[grabit-worker] skeleton mode — no workers registered yet')
 
-// Keep the process alive.
-setInterval(() => {}, 1 << 30)
+const ingestWorker = startIngestWorker()
+
+async function shutdown(signal: string) {
+  console.log(`[grabit-worker] ${signal} received — shutting down`)
+  await ingestWorker.close()
+  await prisma.$disconnect()
+  process.exit(0)
+}
+
+process.on('SIGINT', () => void shutdown('SIGINT'))
+process.on('SIGTERM', () => void shutdown('SIGTERM'))

@@ -18,4 +18,7 @@ export const config = {
   databaseUrl: required('DATABASE_URL', 'postgresql://grabit:grabit@localhost:5433/grabit'),
   redisUrl: required('REDIS_URL', 'redis://localhost:6380'),
   aiAgentUrl: required('AI_AGENT_URL', 'http://localhost:8001'),
+  // Razorpay webhook signing secret (Dashboard -> Settings -> Webhooks).
+  // Optional at boot: verification fails closed when unset.
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
 }

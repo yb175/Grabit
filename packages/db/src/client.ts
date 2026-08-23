@@ -8,6 +8,10 @@
 // This file exports a single PrismaClient instance so the API and the workers
 // share one connection pool. Every part of the system (webhook ingestion,
 // recovery state machine, ledger, audit trail) reads/writes through this.
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, Prisma } from '@prisma/client'
+
+// Re-exported so apps never need @prisma/client as a direct dependency —
+// @grabit/db is the single owner of everything Prisma.
+export { Prisma }
 
 export const prisma = new PrismaClient()

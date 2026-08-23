@@ -145,7 +145,7 @@ model RecoveryJob {
   failedPaymentId String            @map("failed_payment_id") @db.Uuid
   status          RecoveryJobStatus @default(pending)
   /// AI (or rules) classification of the failure — decides the playbook.
-  failureType     FailureType
+  failureType     FailureType       @map("failure_type")
   /// How many follow-up messages already sent (stopping rule: >= max).
   followUpCount   Int               @default(0) @map("follow_up_count")
   /// Max follow-ups allowed for this case (policy: by failure type/amount).
