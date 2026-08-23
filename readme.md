@@ -59,24 +59,9 @@ Grabit closes the loop:
 
 ---
 
-## System Flow (Simplified)
+## System Flow =
 
-```text
-Razorpay Webhook
-       ↓
-recovery-ingest queue
-       ↓
-Ingest Worker
-       ↓
-Recovery Service (Orchestrator)
-   ├── Stopping Rules
-   └── AI Agent (Router + Decision)
-       ↓
-   ┌──────────┬──────────┬──────────┐
-   ↓          ↓          ↓
-HITL       Message    Follow Up
-Worker     Worker     Worker
-```
+![System Flow](./docs/system_flow.png)
 
 ---
 
