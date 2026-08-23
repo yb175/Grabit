@@ -4,13 +4,15 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts"
+    "start": "tsx src/index.ts",
+    "test": "node --import tsx --test test/ingest.test.ts"
   },
   "dependencies": {
     "@grabit/config": "workspace:*",
     "@grabit/core": "workspace:*",
     "@grabit/db": "workspace:*",
-    "@grabit/queue": "workspace:*"
+    "@grabit/queue": "workspace:*",
+    "bullmq": "^5.30.0"
   },
   "devDependencies": {
     "tsx": "^4.19.0"

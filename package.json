@@ -4,5 +4,9 @@
   "scripts": {
     "dev:api": "pnpm --filter @grabit/api dev",
     "dev:worker": "pnpm --filter @grabit/worker dev"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
   }
 }

@@ -4,6 +4,7 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
+    "@grabit/config": "workspace:*",
     "bullmq": "^5.30.0"
   }
 }
