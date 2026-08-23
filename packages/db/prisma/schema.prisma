@@ -1,15 +1,24 @@
-// Grabit Prisma schema.
+// ============================================================================
+// GRABIT — Database Schema (PostgreSQL + Prisma)
+// ============================================================================
+// Grabit is an AI-powered Payment Revenue Recovery system:
+//   1. Detect failed payments & UPI Autopay failures (Razorpay webhooks)
+//   2. Diagnose the failure type with an AI agent (hard / soft /
+//      autopay_failed / autopay_cancelled)
+//   3. Decide the smartest action (retry / one-click / delay / HITL / stop)
+//   4. Send personalized WhatsApp recovery messages at the right time
+//   5. Track every recovered rupee in the Recovery Ledger + Dashboard
 //
-// Eventually contains the full data model for revenue recovery:
-//  - PaymentFailure   : ingested failed payment / autopay events (from Razorpay webhooks)
-//  - RecoveryAttempt  : state machine per failure (pending -> diagnosing -> contacting -> recovered/abandoned/escalated)
-//  - MessageLog       : every WhatsApp recovery message sent (with AI-generated copy)
-//  - HitlTask         : human-in-the-loop review queue for high-value / unclear cases
-//  - LedgerEntry      : recovered-amount ledger powering the dashboard
-//  - AuditLog         : immutable trail of every decision the system made
+// Money note: ALL monetary amounts are stored in **RUPEES** (Decimal), not
+// paise. Razorpay sends paise — convert at the ingestion boundary
+// (divide by 100) so the rest of the system (ledger, dashboard) works in
+// rupees end to end.
 //
-// Chunk 1 keeps it minimal: a HealthCheck model just to prove the database
-// connection works. Replace with the real schema in Chunk 2.
+// Conventions:
+//   - All PKs are UUIDs (generated in the DB via gen_random_uuid()).
+//   - All timestamps are timestamptz (UTC).
+//   - Flexible payloads are Jsonb.
+// ============================================================================
 
 generator client {
   provider = "prisma-client-js"
@@ -20,7 +29,292 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model HealthCheck {
-  id        Int      @id @default(autoincrement())
-  checkedAt DateTime @default(now())
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// Lifecycle of a recovery job — the state machine the worker drives.
+/// pending -> processing -> waiting (smart-delay) -> hitl -> recovered | unrecovered | rejected | stale
+enum RecoveryJobStatus {
+  pending /// Ingested, not yet picked up by the recovery worker
+  processing /// Agent is diagnosing / decision in progress
+  waiting /// Smart timing: message scheduled, next_attempt_at in the future
+  hitl /// Escalated to a human reviewer
+  recovered /// Payment recovered — ledger entry written
+  unrecovered /// All attempts exhausted, stopping rules fired
+  rejected /// Human (or policy) rejected further recovery
+  stale /// Superseded / too old to act on
+}
+
+/// AI agent's failure classification.
+enum FailureType {
+  hard /// Card blocked, fraud flags — retry won't help
+  soft /// Low balance, transient bank issue — retryable
+  autopay_failed /// UPI Autopay mandate charge failed
+  autopay_cancelled /// Mandate revoked by customer/bank
+}
+
+/// Actions the AI agent can recommend.
+enum DecisionType {
+  retry /// Ask customer to retry the same method
+  one_click /// Send one-click recovery link (Razorpay re-auth/payment URL)
+  escalate_hitl /// Hand off to a human
+  stop /// Do not contact customer further
+  delay /// Re-evaluate at a smarter time (salary window, etc.)
+}
+
+/// Message delivery status (WhatsApp provider lifecycle).
+enum MessageStatus {
+  queued /// Created, not yet handed to the provider
+  sent /// Accepted by the provider
+  delivered /// Provider confirmed delivery
+  read /// Customer opened it
+  failed /// Provider rejected / errored
+}
+
+/// Human-in-the-loop review status.
+enum HitlStatus {
+  pending /// Awaiting reviewer
+  approved /// Reviewer approved the proposed action
+  rejected /// Reviewer rejected / closed the case
+}
+
+/// Final money outcome, recorded in the ledger.
+enum LedgerStatus {
+  recovered /// Money successfully recovered
+  unrecovered /// Case closed without recovery
+}
+
+/// How the money was recovered — powers dashboard breakdowns.
+enum RecoveryMethod {
+  retry /// Customer retried via original method
+  one_click /// Customer used the one-click recovery link
+  mandate_reauth /// Autopay mandate re-authorized
+  manual /// Recovered via human (HITL) intervention
+}
+
+// ---------------------------------------------------------------------------
+// failed_payments — ingested failure events (one per Razorpay failure)
+// ---------------------------------------------------------------------------
+
+/// Every failed payment / Autopay failure event, normalized from Razorpay
+/// webhooks. This is the raw input to the recovery pipeline; the original
+/// webhook body is preserved verbatim in raw_payload for replay & audit.
+model FailedPayment {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Razorpay payment entity id — unique, used for webhook deduplication.
+  razorpayPaymentId String   @unique @map("razorpay_payment_id")
+  razorpayOrderId   String?  @map("razorpay_order_id")
+  /// Amount in RUPEES (Razorpay sends paise — convert at ingestion).
+  amount            Decimal  @db.Decimal(14, 2)
+  currency          String   @default("INR")
+  /// Machine-readable decline code (e.g. "insufficient_funds").
+  failureCode       String?  @map("failure_code")
+  /// Human-readable reason as reported by the gateway/bank.
+  failureReason     String?  @map("failure_reason")
+  /// Where the failure surfaced: "payment" | "subscription" | "mandate".
+  failureSource     String?  @map("failure_source")
+  /// upi | card | netbanking | wallet | mandate
+  paymentMethod     String?  @map("payment_method")
+  customerPhone     String?  @map("customer_phone")
+  customerEmail     String?  @map("customer_email")
+  customerName      String?  @map("customer_name")
+  /// Verbatim Razorpay webhook payload — never lose the source of truth.
+  rawPayload        Json     @map("raw_payload") @db.JsonB
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recoveryJobs RecoveryJob[]    @relation("FailedPaymentToRecoveryJobs")
+  ledger       RecoveryLedger[] @relation("FailedPaymentToLedger")
+
+  @@index([createdAt])
+  @@index([razorpayOrderId])
+  @@index([customerPhone])
+  @@map("failed_payments")
+}
+
+// ---------------------------------------------------------------------------
+// recovery_jobs — the state machine: one recovery workflow per failure
+// ---------------------------------------------------------------------------
+
+/// A recovery job drives the recovery of one FailedPayment. Created by the
+/// ingest worker, progressed by the recovery/message/followup workers.
+/// next_attempt_at + status drive the scheduler (BullMQ delayed jobs poll
+/// for `waiting` jobs whose next_attempt_at has passed).
+model RecoveryJob {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  failedPaymentId String            @map("failed_payment_id") @db.Uuid
+  status          RecoveryJobStatus @default(pending)
+  /// AI (or rules) classification of the failure — decides the playbook.
+  failureType     FailureType
+  /// How many follow-up messages already sent (stopping rule: >= max).
+  followUpCount   Int               @default(0) @map("follow_up_count")
+  /// Max follow-ups allowed for this case (policy: by failure type/amount).
+  maxFollowUps    Int               @default(3) @map("max_follow_ups")
+  /// When the next attempt is allowed (smart timing: quiet hours, salary
+  /// windows, retry gaps). The scheduler polls this.
+  nextAttemptAt   DateTime?         @map("next_attempt_at") @db.Timestamptz(3)
+  /// Higher = processed first. Amount-based (high value first).
+  priority        Int               @default(0)
+  /// Reviewer/user this job is assigned to (during HITL).
+  assignedTo      String?           @map("assigned_to")
+  /// Last pipeline error — for debugging stuck jobs.
+  lastError       String?           @map("last_error")
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  failedPayment FailedPayment    @relation("FailedPaymentToRecoveryJobs", fields: [failedPaymentId], references: [id], onDelete: Cascade)
+  decisions     AgentDecision[]
+  messages      Message[]
+  hitlTasks     HitlQueue[]
+  ledger        RecoveryLedger[]
+
+  @@index([status, nextAttemptAt]) // scheduler's main query
+  @@index([failureType])
+  @@index([createdAt])
+  @@index([assignedTo])
+  @@map("recovery_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// agent_decisions — every AI call, logged with reasoning + confidence
+// ---------------------------------------------------------------------------
+
+/// One row per AI-agent invocation. Keeps the full decision trail: what the
+/// agent decided, why (explanation), how confident it was, and the exact
+/// action payload the workers executed. Powers the audit trail and lets us
+/// A/B compare model versions later.
+model AgentDecision {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recoveryJobId String       @map("recovery_job_id") @db.Uuid
+  decisionType  DecisionType @map("decision_type")
+  /// Human-readable reasoning: "low balance + salary window tomorrow 10am".
+  explanation   String?
+  /// Structured action for the workers: message template, timing, link URL…
+  actionPayload Json?        @map("action_payload") @db.JsonB
+  /// 0.0 – 1.0 model self-reported confidence. Low confidence => HITL.
+  confidence    Float?
+  /// e.g. "deepseek-chat-v4" — trace which model made the call.
+  modelVersion  String?      @map("model_version")
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recoveryJob RecoveryJob @relation(fields: [recoveryJobId], references: [id], onDelete: Cascade)
+
+  @@index([recoveryJobId, createdAt])
+  @@index([decisionType])
+  @@map("agent_decisions")
+}
+
+// ---------------------------------------------------------------------------
+// messages — every recovery message sent (WhatsApp-first)
+// ---------------------------------------------------------------------------
+
+/// Outbound customer communications. Currently channel = WhatsApp; the
+/// column stays open for SMS/email expansion. provider_message_id links to
+/// the provider (e.g. WhatsApp Cloud API) for delivery webhooks.
+model Message {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recoveryJobId     String        @map("recovery_job_id") @db.Uuid
+  /// "whatsapp" | "sms" | "email" (future)
+  channel           String        @default("whatsapp")
+  toPhone           String        @map("to_phone")
+  /// Final rendered body (AI-personalized copy) — store what was actually sent.
+  messageBody       String        @map("message_body")
+  /// WhatsApp template name if a pre-approved template was used.
+  templateName      String?       @map("template_name")
+  status            MessageStatus @default(queued)
+  /// Provider's message id — correlates delivery/read/failed webhooks.
+  providerMessageId String?       @unique @map("provider_message_id")
+  errorMessage      String?       @map("error_message")
+  sentAt            DateTime?     @map("sent_at") @db.Timestamptz(3)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recoveryJob RecoveryJob @relation(fields: [recoveryJobId], references: [id], onDelete: Cascade)
+
+  @@index([recoveryJobId, createdAt])
+  @@index([status])
+  @@index([toPhone])
+  @@map("messages")
+}
+
+// ---------------------------------------------------------------------------
+// hitl_queue — human-in-the-loop review tasks
+// ---------------------------------------------------------------------------
+
+/// When the AI flags a case for human review (high value, low confidence,
+/// angry-customer signals, mandate disputes), a task lands here. A reviewer
+/// sees the AI's recommendation via the /hitl API and approves/rejects it.
+model HitlQueue {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recoveryJobId String     @map("recovery_job_id") @db.Uuid
+  /// Why it was escalated: "high_value", "low_confidence", "mandate_cancelled"…
+  reason        String
+  status        HitlStatus @default(pending)
+  /// Reviewer identity (email/user id) once reviewed.
+  reviewedBy    String?    @map("reviewed_by")
+  reviewedAt    DateTime?  @map("reviewed_at") @db.Timestamptz(3)
+  /// Reviewer's notes / override instructions.
+  notes         String?
+  createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recoveryJob RecoveryJob @relation(fields: [recoveryJobId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt]) // reviewer's worklist query
+  @@index([recoveryJobId])
+  @@map("hitl_queue")
+}
+
+// ---------------------------------------------------------------------------
+// recovery_ledger — the money trail (source of truth for the dashboard)
+// ---------------------------------------------------------------------------
+
+/// Append-only record of monetary outcomes. One row per closed case:
+/// recovered (with method + timestamp) or unrecovered. The dashboard's
+/// "recovered ₹X" numbers aggregate from here — nothing else.
+model RecoveryLedger {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recoveryJobId   String          @map("recovery_job_id") @db.Uuid
+  failedPaymentId String          @map("failed_payment_id") @db.Uuid
+  /// Amount in RUPEES — mirrors the failed payment amount.
+  amount          Decimal         @db.Decimal(14, 2)
+  status          LedgerStatus
+  /// How it was recovered — powers "one-click works best" analytics.
+  recoveryMethod  RecoveryMethod? @map("recovery_method")
+  recoveredAt     DateTime?       @map("recovered_at") @db.Timestamptz(3)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recoveryJob   RecoveryJob   @relation(fields: [recoveryJobId], references: [id], onDelete: Cascade)
+  failedPayment FailedPayment @relation("FailedPaymentToLedger", fields: [failedPaymentId], references: [id], onDelete: Cascade)
+
+  @@index([failedPaymentId])
+  @@index([status, recoveredAt])
+  @@index([recoveryMethod])
+  @@map("recovery_ledger")
+}
+
+// ---------------------------------------------------------------------------
+// audit_logs — polymorphic trail of every state change
+// ---------------------------------------------------------------------------
+
+/// Immutable, polymorphic audit log. entity_type + entity_id point at any
+/// row in any table (recovery_job, hitl_queue, message, …). old_value /
+/// new_value capture before/after state. Written by workers and API on
+/// every meaningful mutation — compliance + debugging.
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Target table name, e.g. "recovery_jobs".
+  entityType  String   @map("entity_type")
+  /// UUID of the target row (string — polymorphic, no FK).
+  entityId    String   @map("entity_id") @db.Uuid
+  /// What happened: "status_changed", "message_sent", "hitl_approved"…
+  action      String
+  oldValue    Json?    @map("old_value") @db.JsonB
+  newValue    Json?    @map("new_value") @db.JsonB
+  /// "system" | "agent" | reviewer email.
+  performedBy String?  @map("performed_by")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([createdAt])
+  @@index([action])
+  @@map("audit_logs")
 }
