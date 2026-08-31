@@ -199,6 +199,17 @@ The database model is strictly relational with foreign key integrity, audit logg
 
 ![Db Schema](./docs/db_schema.png)
 
+## Documentation
+
+Comprehensive engineering specifications, state machines, and data models are available in the [`/documentation`](./documentation) directory:
+
+- [**System Architecture & Event Flow**](./documentation/ARCHITECTURE.md)
+- [**Stopping Rules & Smart-Timing Engine**](./documentation/STOPPING_RULES_ENGINE.md)
+- [**Worker Pipeline & Queue Processing**](./documentation/WORKERS_PIPELINE.md)
+- [**Database Models & Schema Invariants**](./documentation/DATABASE_SCHEMA.md)
+
+---
+
 ## Tech Stack
 
 | Layer              | Choice                          |
