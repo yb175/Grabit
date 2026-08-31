@@ -18,7 +18,7 @@ This document outlines the architecture, data models, queue pipelines, stopping 
 
 ## 1. System Architecture
 
-Grabit is built on a decoupled, asynchronous, event-driven architecture designed to process high-volume payment failure webhooks with zero loss, sub-50ms HTTP ingestion, deterministic rule gating, and financial ledgering.
+Grabit is built on a decoupled, asynchronous, event-driven architecture designed to process high-volume payment failure webhooks with zero loss, sub-50ms HTTP ingestion, deterministic rule gating, and recovery ledgering with audit logging.
 
 ```
 +---------------------------------------------------------------------------------------------------+
@@ -32,7 +32,7 @@ Grabit is built on a decoupled, asynchronous, event-driven architecture designed
 +---------------------------------------------------------------------------------------------------+
 | INGESTION & API GATEWAY (Hono + TypeScript)                                                       |
 |   /webhooks/razorpay  •  /api/hitl  •  /api/ledger  •  /api/dashboard  •  /health                 |
-|   - Signature verification & payload sanitization                                                 |
+|   - Signature verification + payload parsing/casting                                             |
 |   - Currency normalization (Paise -> INR Decimal)                                                 |
 |   - Enqueue to BullMQ Ingest Queue                                                                |
 +---------------------------------------------+-----------------------------------------------------+
@@ -42,7 +42,7 @@ Grabit is built on a decoupled, asynchronous, event-driven architecture designed
 | ASYNCHRONOUS PROCESSING PIPELINE (BullMQ + Redis 6380)                                            |
 |                                                                                                   |
 |  +-----------------------+      +--------------------------+      +----------------------------+  |
-|  |   1. Ingest Worker    | ---> |    2. Recovery Worker    | ---> |    3. AI Agent Service     |  |
+|  |   1. Ingest Worker    | ---> |    2. Recovery Worker    | ---> |    3. AI Agent Service (planned) |  |
 |  |   - Dedupe & Normalize|      |   - Stopping Rules Gate  |      |   (Python/Agno/FastAPI)    |  |
 |  |   - Create Failure &  |      |   - Quiet Hours (IST)    |      |   - Failure Diagnosis      |  |
 |  |     Recovery Job      |      |   - Salary Window Check  |      |   - Hinglish Copy Gen      |  |
@@ -75,7 +75,7 @@ Grabit is built on a decoupled, asynchronous, event-driven architecture designed
            |
            v
 +----------------------+
-| 1. Ingest & Verify   | ---> Validate Signature -> Paise-to-INR Conversion -> Upsert `failed_payments`
+| 1. Ingest & Verify   | ---> Validate Signature -> Paise-to-INR Conversion -> Idempotently create `failed_payments`; ignore duplicate webhooks
 +----------+-----------+
            |
            v
@@ -277,27 +277,32 @@ export async function closeAllQueues(): Promise<void> {
 
 Located in `packages/core/src/stopping-rules.ts` and `packages/core/src/razorpay.ts`.
 
-### 5.1. Stopping Rules Engine Snippet
+### 5.1. Stopping Rules Engine (Implementation Summary / Pseudocode)
+
+*The complete executable contract lives in `packages/core/src/stopping-rules.ts`.*
 
 ```typescript
 export function evaluateStoppingRules(input: StoppingRulesInput): StoppingRuleDecision {
-  const { job, payment, now = new Date(), lastMessageAt, aiConfidence, hitlStatus } = input
+  const { job, payment, now = new Date(), lastMessageAt, aiConfidence, hitlStatus, isAmbiguous } = input
   const cfg: StoppingRulesConfig = { ...DEFAULT_STOPPING_RULES_CONFIG, ...input.config }
 
-  // 1. Terminal State: Already Recovered
-  if (job.status === 'recovered') {
-    return { action: 'stop_recovered', rule: 'already_recovered', reason: 'Payment already recovered', shouldCallAi: false }
+  // 1. Terminal State: Already Recovered or Paid
+  if (payment.isPaid === true || job.status === 'recovered') {
+    return { action: 'stop_recovered', rule: 'already_recovered', reason: 'Payment already recovered/paid', shouldCallAi: false }
   }
 
   // 2. HITL Reviewer Decision
-  if (hitlStatus === 'rejected') {
-    return { action: 'stop_rejected', rule: 'hitl_rejected', reason: 'Manual review rejected recovery', shouldCallAi: false }
+  if (hitlStatus === 'rejected' || job.status === 'rejected') {
+    return { action: 'stop_rejected', rule: 'hitl_rejected', reason: 'Case rejected by reviewer', shouldCallAi: false }
   }
 
-  // 3. Stale Outreach (> 24h inactivity)
+  // 3. Stale Status or Outreach Timeout (> 24h inactivity)
+  if (job.status === 'stale') {
+    return { action: 'stale', rule: 'stale_status', reason: 'Job already marked stale', shouldCallAi: false }
+  }
   if (lastMessageAt) {
-    const hoursSinceLastMessage = (now.getTime() - new Date(lastMessageAt).getTime()) / (1000 * 60 * 60)
-    if (hoursSinceLastMessage >= cfg.staleThresholdHours) {
+    const elapsedHours = (now.getTime() - new Date(lastMessageAt).getTime()) / (1000 * 60 * 60)
+    if (elapsedHours >= cfg.staleThresholdHours) {
       return { action: 'stale', rule: 'stale_timeout', reason: `No response within ${cfg.staleThresholdHours}h`, shouldCallAi: false }
     }
   }
@@ -306,26 +311,29 @@ export function evaluateStoppingRules(input: StoppingRulesInput): StoppingRuleDe
   const currentCount = job.followUpCount ?? 0
   const maxAllowed = job.maxFollowUps ?? cfg.maxFollowUps
   if (currentCount >= maxAllowed) {
-    return { action: 'stop_unrecovered', rule: 'max_followups_exceeded', reason: `Follow-up count (${currentCount}) reached maximum (${maxAllowed})`, shouldCallAi: false }
+    return { action: 'stop_unrecovered', rule: 'max_followups_exceeded', reason: `Max follow-up attempts (${maxAllowed}) reached`, shouldCallAi: false }
   }
 
-  // 5. Human Escalation: High Value
-  const amount = typeof payment.amount === 'number' ? payment.amount : Number(payment.amount.toString())
+  // 5. Human Escalation: High Value, Low AI Confidence, or Ambiguous Detail
+  const amount = parseAmount(payment.amount)
   if (amount >= cfg.hitlAmountThresholdRupees) {
-    return { action: 'hitl', rule: 'hitl_high_value', reason: `Payment amount (₹${amount}) >= threshold (₹${cfg.hitlAmountThresholdRupees})`, shouldCallAi: false }
+    return { action: 'hitl', rule: 'hitl_high_value', reason: `Payment amount (₹${amount}) >= threshold`, shouldCallAi: false }
+  }
+  if (aiConfidence !== undefined && aiConfidence < cfg.minAiConfidence) {
+    return { action: 'hitl', rule: 'hitl_low_confidence', reason: `AI confidence below threshold (${cfg.minAiConfidence})`, shouldCallAi: false }
+  }
+  if (isAmbiguous === true) {
+    return { action: 'hitl', rule: 'hitl_ambiguous', reason: 'Ambiguous payment failure requires human review', shouldCallAi: false }
   }
 
   // 6. Hard Decline (Unrecoverable)
-  if (isHardDecline(payment.failureCode)) {
-    return { action: 'stop_unrecovered', rule: 'hard_failure', reason: `Hard failure code (${payment.failureCode}) cannot be recovered`, shouldCallAi: false }
+  const isHardDecline = Boolean(payment.failureCode && HARD_DECLINE_CODES.has(payment.failureCode))
+  if (job.failureType === 'hard' || isHardDecline) {
+    return { action: 'stop_unrecovered', rule: 'hard_failure', reason: 'Hard failure cannot be retried', shouldCallAi: false }
   }
 
-  // 7. Smart Timing: Quiet Hours (21:00 - 08:00 IST)
-  const istHour = getISTHour(now)
-  if (istHour >= cfg.quietHoursStartHourIST || istHour < cfg.quietHoursEndHourIST) {
-    const nextWindow = computeNextAllowedOutreachTime(now, cfg)
-    return { action: 'delay', rule: 'quiet_hours', reason: `Current IST hour (${istHour}) is in quiet hours`, nextAttemptAt: nextWindow, shouldCallAi: false }
-  }
+  // 7. Smart Timing: Repeat Gap, Salary Window, Quiet Hours (21:00 - 08:00 IST)
+  // ... (calculates nextAllowed date and returns action: 'delay' with nextAttemptAt if in the future)
 
   // 8. Default: Pass to AI Agent
   return { action: 'continue', rule: 'all_passed', reason: 'All stopping rules and timing gates passed', shouldCallAi: true }
@@ -430,7 +438,7 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
     throw err
   }
 
-  // 2. Spawn recovery job & forward to recovery queue
+  // 2. Spawn recovery job record (recovery queue dispatch is wired in a later slice)
   const recoveryJob = await prisma.recoveryJob.create({
     data: {
       failedPaymentId: failedPayment.id,
@@ -439,9 +447,6 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
       maxFollowUps: 2,
     },
   })
-
-  const recoveryQueue = getQueue('recovery')
-  await recoveryQueue.add('evaluate-recovery', { recoveryJobId: recoveryJob.id })
 
   return {
     outcome: 'created',
@@ -453,6 +458,8 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
 ```
 
 ### 7.2. Recovery Worker (`apps/worker/src/workers/recovery.worker.ts`)
+
+*Implementation excerpt showing idempotent state transitions and queue handoffs.*
 
 ```typescript
 export async function processRecoveryJob(
@@ -491,8 +498,10 @@ export async function processRecoveryJob(
     case 'stop_recovered': {
       await prisma.$transaction([
         prisma.recoveryJob.update({ where: { id: job.id }, data: { status: 'recovered' } }),
-        prisma.recoveryLedger.create({
-          data: {
+        prisma.recoveryLedger.upsert({
+          where: { id: stableUuid(`recovery-ledger:recovered:${job.id}`) },
+          create: {
+            id: stableUuid(`recovery-ledger:recovered:${job.id}`),
             recoveryJobId: job.id,
             failedPaymentId: job.failedPayment.id,
             amount: job.failedPayment.amount,
@@ -500,15 +509,43 @@ export async function processRecoveryJob(
             recoveryMethod: 'retry',
             recoveredAt: now,
           },
+          update: {},
         }),
       ])
+      break
+    }
+    case 'stop_unrecovered': {
+      await prisma.$transaction([
+        prisma.recoveryJob.update({ where: { id: job.id }, data: { status: 'unrecovered' } }),
+        prisma.recoveryLedger.upsert({
+          where: { id: stableUuid(`recovery-ledger:unrecovered:${job.id}`) },
+          create: {
+            id: stableUuid(`recovery-ledger:unrecovered:${job.id}`),
+            recoveryJobId: job.id,
+            failedPaymentId: job.failedPayment.id,
+            amount: job.failedPayment.amount,
+            status: 'unrecovered',
+          },
+          update: {},
+        }),
+      ])
+      break
+    }
+    case 'stop_rejected': {
+      await prisma.recoveryJob.update({ where: { id: job.id }, data: { status: 'rejected' } })
+      break
+    }
+    case 'stale': {
+      await prisma.recoveryJob.update({ where: { id: job.id }, data: { status: 'stale' } })
       break
     }
     case 'hitl': {
       await prisma.$transaction(async (tx) => {
         await tx.recoveryJob.update({ where: { id: job.id }, data: { status: 'hitl' } })
-        await tx.hitlTask.create({
-          data: { recoveryJobId: job.id, reason: decision.reason, status: 'pending' },
+        await tx.hitlQueue.upsert({
+          where: { id: stableUuid(`hitl-task:${job.id}`) },
+          create: { id: stableUuid(`hitl-task:${job.id}`), recoveryJobId: job.id, reason: decision.reason, status: 'pending' },
+          update: {},
         })
       })
       await getQueue('hitl').add('review', { recoveryJobId: job.id, reason: decision.reason })
@@ -519,6 +556,10 @@ export async function processRecoveryJob(
         where: { id: job.id },
         data: { status: 'waiting', nextAttemptAt: decision.nextAttemptAt },
       })
+      if (decision.nextAttemptAt) {
+        const delayMs = Math.max(decision.nextAttemptAt.getTime() - now.getTime(), 0)
+        await getQueue('recovery').add('evaluate-recovery', { recoveryJobId: job.id }, { delay: delayMs })
+      }
       break
     }
     case 'continue': {

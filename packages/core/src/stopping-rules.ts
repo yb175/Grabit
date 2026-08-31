@@ -203,23 +203,39 @@ export function isInsideSalaryWindow(
 
 export function getNextSalaryWindowDate(
   date: Date,
+  salaryWindowDays: readonly number[] = DEFAULT_STOPPING_RULES_CONFIG.salaryWindowDays,
   quietHoursEndHour = 8,
 ): Date {
   const ist = toISTComponents(date)
-  // Days 1–5: already inside salary window day
-  if (ist.day >= 1 && ist.day <= 5) {
-    return fromISTComponents(ist.year, ist.month, ist.day, quietHoursEndHour, 0, 0)
+  const allowedDays = [...new Set(salaryWindowDays)]
+    .filter((day) => day >= 1 && day <= 31)
+    .sort((a, b) => a - b)
+
+  const monthMatches = (year: number, month: number, day: number) => {
+    const candidate = fromISTComponents(year, month, day, quietHoursEndHour, 0, 0)
+    const asIST = toISTComponents(candidate)
+    return asIST.year === year && asIST.month === month && asIST.day === day
   }
-  // Days 6–24: next salary window is on 25th of current month
-  if (ist.day < 25) {
-    return fromISTComponents(ist.year, ist.month, 25, quietHoursEndHour, 0, 0)
+
+  for (const day of allowedDays) {
+    if (day < ist.day) continue
+    if (monthMatches(ist.year, ist.month, day)) {
+      return fromISTComponents(ist.year, ist.month, day, quietHoursEndHour, 0, 0)
+    }
   }
-  // Days 25–28: already inside salary window day
-  if (ist.day <= 28) {
-    return fromISTComponents(ist.year, ist.month, ist.day, quietHoursEndHour, 0, 0)
+
+  for (let monthOffset = 1; monthOffset <= 24; monthOffset += 1) {
+    const base = new Date(Date.UTC(ist.year, ist.month - 1 + monthOffset, 1))
+    const year = base.getUTCFullYear()
+    const month = base.getUTCMonth() + 1
+    for (const day of allowedDays) {
+      if (monthMatches(year, month, day)) {
+        return fromISTComponents(year, month, day, quietHoursEndHour, 0, 0)
+      }
+    }
   }
-  // Days 29–31: next salary window is 1st of next month
-  return fromISTComponents(ist.year, ist.month + 1, 1, quietHoursEndHour, 0, 0)
+
+  return fromISTComponents(ist.year, ist.month + 1, allowedDays[0] ?? 1, quietHoursEndHour, 0, 0)
 }
 
 export function parseAmount(amount: number | string | { toString(): string } | unknown): number {
@@ -379,11 +395,15 @@ export function evaluateStoppingRules(input: StoppingRulesInput): StoppingRuleDe
   const isLowBalanceOrSoft = job.failureType === 'soft' || payment.failureCode === 'insufficient_funds'
   if (input.preferSalaryWindow && isLowBalanceOrSoft) {
     if (!isInsideSalaryWindow(earliestAllowed, cfg.salaryWindowDays)) {
-      const salaryDate = getNextSalaryWindowDate(earliestAllowed, cfg.quietHoursEndHourIST)
+      const salaryDate = getNextSalaryWindowDate(
+        earliestAllowed,
+        cfg.salaryWindowDays,
+        cfg.quietHoursEndHourIST,
+      )
       if (salaryDate.getTime() > earliestAllowed.getTime()) {
         earliestAllowed = salaryDate
         timingRule = 'salary_window'
-        timingDetail = 'Delayed until next salary window (1st–5th or 25th–28th).'
+        timingDetail = 'Delayed until next salary window.'
       }
     }
   }
@@ -395,9 +415,13 @@ export function evaluateStoppingRules(input: StoppingRulesInput): StoppingRuleDe
 
     // If salary window preference was set, ensure the morning date is still within salary window
     if (input.preferSalaryWindow && isLowBalanceOrSoft && !isInsideSalaryWindow(earliestAllowed, cfg.salaryWindowDays)) {
-      earliestAllowed = getNextSalaryWindowDate(earliestAllowed, cfg.quietHoursEndHourIST)
+      earliestAllowed = getNextSalaryWindowDate(
+        earliestAllowed,
+        cfg.salaryWindowDays,
+        cfg.quietHoursEndHourIST,
+      )
       timingRule = 'salary_window'
-      timingDetail = 'Delayed until next salary window (1st–5th or 25th–28th).'
+      timingDetail = 'Delayed until next salary window.'
     } else if (!timingRule || timingRule === 'repeat_failure_gap') {
       const isNightCreation = followUpCount === 0 && Boolean(payment.createdAt || job.createdAt)
       timingRule = isNightCreation ? 'night_failure' : 'quiet_hours'

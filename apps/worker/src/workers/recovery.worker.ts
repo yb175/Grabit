@@ -8,8 +8,9 @@
 //   - Inactivity >= 24h -> mark stale -> stop
 //   - HITL criteria met (amount >= 10k, low AI confidence, ambiguous) -> escalate to HITL
 //   - Timing constraint (quiet hours 21:00-08:00 IST, repeat gap, salary window) -> delay to next window
-//   - All clear -> status=processing -> hand off to AI Agent
+//   - All clear -> status=processing -> hand off to AI Agent (planned)
 
+import { createHash } from 'node:crypto'
 import { Worker } from 'bullmq'
 import { prisma } from '@grabit/db'
 import { config } from '@grabit/config'
@@ -32,6 +33,20 @@ export interface RecoveryProcessResult {
   outcome: 'completed' | 'not_found'
   recoveryJobId: string
   decision?: StoppingRuleDecision
+}
+
+function stableUuid(key: string): string {
+  const bytes = createHash('sha1').update(key).digest()
+  bytes[6] = (bytes[6] & 0x0f) | 0x50
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = bytes.toString('hex').slice(0, 32)
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join('-')
 }
 
 /**
@@ -87,13 +102,17 @@ export async function processRecoveryJob(
   // Execute the decision against the database
   switch (decision.action) {
     case 'stop_recovered': {
+      const ledgerId = stableUuid(`recovery-ledger:recovered:${job.id}`)
+      const auditId = stableUuid(`audit:stop_recovered:${job.id}`)
       await prisma.$transaction([
         prisma.recoveryJob.update({
           where: { id: job.id },
           data: { status: 'recovered' },
         }),
-        prisma.recoveryLedger.create({
-          data: {
+        prisma.recoveryLedger.upsert({
+          where: { id: ledgerId },
+          create: {
+            id: ledgerId,
             recoveryJobId: job.id,
             failedPaymentId: job.failedPayment.id,
             amount: job.failedPayment.amount,
@@ -101,9 +120,12 @@ export async function processRecoveryJob(
             recoveryMethod: 'retry',
             recoveredAt: now,
           },
+          update: {},
         }),
-        prisma.auditLog.create({
-          data: {
+        prisma.auditLog.upsert({
+          where: { id: auditId },
+          create: {
+            id: auditId,
             entityType: 'recovery_jobs',
             entityId: job.id,
             action: 'stop_recovered',
@@ -111,27 +133,35 @@ export async function processRecoveryJob(
             newValue: { status: 'recovered', reason: decision.reason },
             performedBy: 'stopping_rules',
           },
+          update: {},
         }),
       ])
       break
     }
 
     case 'stop_unrecovered': {
+      const ledgerId = stableUuid(`recovery-ledger:unrecovered:${job.id}`)
+      const auditId = stableUuid(`audit:stop_unrecovered:${job.id}`)
       await prisma.$transaction([
         prisma.recoveryJob.update({
           where: { id: job.id },
           data: { status: 'unrecovered' },
         }),
-        prisma.recoveryLedger.create({
-          data: {
+        prisma.recoveryLedger.upsert({
+          where: { id: ledgerId },
+          create: {
+            id: ledgerId,
             recoveryJobId: job.id,
             failedPaymentId: job.failedPayment.id,
             amount: job.failedPayment.amount,
             status: 'unrecovered',
           },
+          update: {},
         }),
-        prisma.auditLog.create({
-          data: {
+        prisma.auditLog.upsert({
+          where: { id: auditId },
+          create: {
+            id: auditId,
             entityType: 'recovery_jobs',
             entityId: job.id,
             action: 'stop_unrecovered',
@@ -139,19 +169,23 @@ export async function processRecoveryJob(
             newValue: { status: 'unrecovered', reason: decision.reason },
             performedBy: 'stopping_rules',
           },
+          update: {},
         }),
       ])
       break
     }
 
     case 'stop_rejected': {
+      const auditId = stableUuid(`audit:stop_rejected:${job.id}`)
       await prisma.$transaction([
         prisma.recoveryJob.update({
           where: { id: job.id },
           data: { status: 'rejected' },
         }),
-        prisma.auditLog.create({
-          data: {
+        prisma.auditLog.upsert({
+          where: { id: auditId },
+          create: {
+            id: auditId,
             entityType: 'recovery_jobs',
             entityId: job.id,
             action: 'stop_rejected',
@@ -159,19 +193,23 @@ export async function processRecoveryJob(
             newValue: { status: 'rejected', reason: decision.reason },
             performedBy: 'stopping_rules',
           },
+          update: {},
         }),
       ])
       break
     }
 
     case 'stale': {
+      const auditId = stableUuid(`audit:marked_stale:${job.id}`)
       await prisma.$transaction([
         prisma.recoveryJob.update({
           where: { id: job.id },
           data: { status: 'stale' },
         }),
-        prisma.auditLog.create({
-          data: {
+        prisma.auditLog.upsert({
+          where: { id: auditId },
+          create: {
+            id: auditId,
             entityType: 'recovery_jobs',
             entityId: job.id,
             action: 'marked_stale',
@@ -179,12 +217,16 @@ export async function processRecoveryJob(
             newValue: { status: 'stale', reason: decision.reason },
             performedBy: 'stopping_rules',
           },
+          update: {},
         }),
       ])
       break
     }
 
     case 'delay': {
+      const auditId = stableUuid(
+        `audit:scheduled_delay:${job.id}:${decision.nextAttemptAt?.toISOString() ?? 'none'}`,
+      )
       await prisma.$transaction([
         prisma.recoveryJob.update({
           where: { id: job.id },
@@ -193,8 +235,10 @@ export async function processRecoveryJob(
             nextAttemptAt: decision.nextAttemptAt,
           },
         }),
-        prisma.auditLog.create({
-          data: {
+        prisma.auditLog.upsert({
+          where: { id: auditId },
+          create: {
+            id: auditId,
             entityType: 'recovery_jobs',
             entityId: job.id,
             action: 'scheduled_delay',
@@ -206,26 +250,46 @@ export async function processRecoveryJob(
             },
             performedBy: 'stopping_rules',
           },
+          update: {},
         }),
       ])
+
+      if (decision.nextAttemptAt) {
+        const delayMs = Math.max(decision.nextAttemptAt.getTime() - now.getTime(), 0)
+        await getQueue('recovery').add(
+          'evaluate-recovery',
+          { recoveryJobId: job.id },
+          {
+            delay: delayMs,
+            jobId: stableUuid(`recovery-delay:${job.id}:${decision.nextAttemptAt.toISOString()}`),
+          },
+        )
+      }
       break
     }
 
     case 'hitl': {
+      const hitlTaskId = stableUuid(`hitl-task:${job.id}`)
+      const auditId = stableUuid(`audit:escalated_hitl:${job.id}`)
       await prisma.$transaction(async (tx) => {
         await tx.recoveryJob.update({
           where: { id: job.id },
           data: { status: 'hitl' },
         })
-        const hitlTask = await tx.hitlQueue.create({
-          data: {
+        const hitlTask = await tx.hitlQueue.upsert({
+          where: { id: hitlTaskId },
+          create: {
+            id: hitlTaskId,
             recoveryJobId: job.id,
             reason: decision.reason,
             status: 'pending',
           },
+          update: {},
         })
-        await tx.auditLog.create({
-          data: {
+        await tx.auditLog.upsert({
+          where: { id: auditId },
+          create: {
+            id: auditId,
             entityType: 'recovery_jobs',
             entityId: job.id,
             action: 'escalated_hitl',
@@ -233,23 +297,31 @@ export async function processRecoveryJob(
             newValue: { status: 'hitl', hitlTaskId: hitlTask.id, reason: decision.reason },
             performedBy: 'stopping_rules',
           },
+          update: {},
         })
       })
 
       // Enqueue to HITL queue for notifications/reviewers
       const hitlQueue = getQueue('hitl')
-      await hitlQueue.add('review', { recoveryJobId: job.id, reason: decision.reason })
+      await hitlQueue.add(
+        'review',
+        { recoveryJobId: job.id, reason: decision.reason },
+        { jobId: stableUuid(`hitl-review:${job.id}`) },
+      )
       break
     }
 
     case 'continue': {
+      const auditId = stableUuid(`audit:stopping_rules_passed:${job.id}`)
       await prisma.$transaction([
         prisma.recoveryJob.update({
           where: { id: job.id },
           data: { status: 'processing' },
         }),
-        prisma.auditLog.create({
-          data: {
+        prisma.auditLog.upsert({
+          where: { id: auditId },
+          create: {
+            id: auditId,
             entityType: 'recovery_jobs',
             entityId: job.id,
             action: 'stopping_rules_passed',
@@ -257,9 +329,10 @@ export async function processRecoveryJob(
             newValue: { status: 'processing', reason: decision.reason },
             performedBy: 'stopping_rules',
           },
+          update: {},
         }),
       ])
-      // Next stage: Call Python AI Agent for failure explanation & message copy
+      // Next stage planned: Call Python AI Agent for failure explanation & message copy
       break
     }
   }

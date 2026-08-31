@@ -220,6 +220,27 @@ test('Rule 5: Inside salary window (3rd of month or 26th of month) allows send i
   assert.equal(dec2.shouldCallAi, true)
 })
 
+test('Rule 5: Custom salaryWindowDays are honored when scheduling the next attempt', () => {
+  const { job, payment } = createBaseFixture()
+  const twelfth = fromISTComponents(2025, 5, 12, 14, 0, 0)
+
+  const decision = evaluateStoppingRules({
+    job,
+    payment,
+    now: twelfth,
+    preferSalaryWindow: true,
+    config: { salaryWindowDays: [10, 20] },
+  })
+
+  assert.equal(decision.action, 'delay')
+  assert.equal(decision.rule, 'salary_window')
+  const istNext = toISTComponents(decision.nextAttemptAt!)
+  assert.equal(istNext.year, 2025)
+  assert.equal(istNext.month, 5)
+  assert.equal(istNext.day, 20)
+  assert.equal(istNext.hours, 8)
+})
+
 // ---------------------------------------------------------------------------
 // 6. Repeat Failure Gap
 // ---------------------------------------------------------------------------

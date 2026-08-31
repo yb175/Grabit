@@ -50,7 +50,7 @@ Grabit closes the loop:
 
 ## High Level Architecture
 
-The architecture is built around an event-driven, decoupled pipeline designed for high-throughput webhook ingestion, deterministic rule evaluation, AI-driven recovery messaging, and double-entry financial ledgering.
+The architecture is built around an event-driven, decoupled pipeline designed for high-throughput webhook ingestion, deterministic rule evaluation, AI-driven recovery messaging, and recovery ledger + audit logging.
 
 ```
 +---------------------------------------------------------------------------------------------------+
@@ -64,7 +64,7 @@ The architecture is built around an event-driven, decoupled pipeline designed fo
 +---------------------------------------------------------------------------------------------------+
 | INGESTION & API GATEWAY (Hono + TypeScript)                                                       |
 |   /webhooks/razorpay  •  /api/hitl  •  /api/ledger  •  /api/dashboard  •  /health                 |
-|   - Signature verification & payload sanitization                                                 |
+|   - Signature verification + payload parsing/casting                                             |
 |   - Currency normalization (Paise -> INR Decimal)                                                 |
 |   - Enqueue to BullMQ Ingest Queue                                                                |
 +---------------------------------------------+-----------------------------------------------------+
@@ -74,7 +74,7 @@ The architecture is built around an event-driven, decoupled pipeline designed fo
 | ASYNCHRONOUS PROCESSING PIPELINE (BullMQ + Redis 6380)                                            |
 |                                                                                                   |
 |  +-----------------------+      +--------------------------+      +----------------------------+  |
-|  |   1. Ingest Worker    | ---> |    2. Recovery Worker    | ---> |    3. AI Agent Service     |  |
+|  |   1. Ingest Worker    | ---> |    2. Recovery Worker    | ---> |    3. AI Agent Service (planned) |  |
 |  |   - Dedupe & Normalize|      |   - Stopping Rules Gate  |      |   (Python/Agno/FastAPI)    |  |
 |  |   - Create Failure &  |      |   - Quiet Hours (IST)    |      |   - Failure Diagnosis      |  |
 |  |     Recovery Job      |      |   - Salary Window Check  |      |   - Hinglish Copy Gen      |  |
@@ -111,7 +111,7 @@ The end-to-end recovery lifecycle follows an automated 6-step state transition:
            |
            v
 +----------------------+
-| 1. Ingest & Verify   | ---> Validate Signature -> Paise-to-INR Conversion -> Upsert `failed_payments`
+| 1. Ingest & Verify   | ---> Validate Signature -> Paise-to-INR Conversion -> Idempotently create `failed_payments`; ignore duplicate webhooks
 +----------+-----------+
            |
            v
@@ -150,7 +150,7 @@ The end-to-end recovery lifecycle follows an automated 6-step state transition:
 
 ## Database Schema
 
-The database model is strictly relational with foreign key integrity, double-entry audit logging, and normalized Decimal money handling (stored in INR Rupees).
+The database model is strictly relational with foreign key integrity, audit logging, and normalized Decimal money handling (stored in INR Rupees).
 
 ```
 +---------------------------+             +---------------------------+
