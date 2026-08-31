@@ -69,7 +69,7 @@ test('successful ingest of payment.failed event', async () => {
   assert.equal(fp.recoveryJobs.length, 1)
   assert.equal(fp.recoveryJobs[0].status, 'pending')
   assert.equal(fp.recoveryJobs[0].failureType, 'soft')
-  assert.equal(fp.recoveryJobs[0].maxFollowUps, 3)
+  assert.equal(fp.recoveryJobs[0].maxFollowUps, 2)
 })
 
 test('duplicate event is idempotent — exactly one job', async () => {

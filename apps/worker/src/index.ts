@@ -2,7 +2,7 @@
 //
 // Runs the BullMQ workers that make up the recovery pipeline:
 //   ingest   : webhook event -> persisted failed_payment + recovery_job
-//   recovery : AI diagnosis + action/timing decision   (next slice)
+//   recovery : Stopping rules & smart timing -> AI diagnosis -> message queue
 //   message  : send WhatsApp recovery message           (later)
 //   followup : smart-scheduled retries                  (later)
 //   hitl     : escalate to a human                      (later)
@@ -13,14 +13,16 @@
 import { prisma } from '@grabit/db'
 import { config } from '@grabit/config'
 import { startIngestWorker } from './workers/ingest.worker.js'
+import { startRecoveryWorker } from './workers/recovery.worker.js'
 
 console.log(`[grabit-worker] starting (redis: ${config.redisUrl})`)
 
 const ingestWorker = startIngestWorker()
+const recoveryWorker = startRecoveryWorker()
 
 async function shutdown(signal: string) {
   console.log(`[grabit-worker] ${signal} received — shutting down`)
-  await ingestWorker.close()
+  await Promise.all([ingestWorker.close(), recoveryWorker.close()])
   await prisma.$disconnect()
   process.exit(0)
 }

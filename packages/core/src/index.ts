@@ -20,3 +20,7 @@ export type FailureType = (typeof FAILURE_TYPES)[number]
 
 // Razorpay domain: event types, whitelist, classification rules.
 export * from './razorpay.js'
+
+// Stopping Rules & Smart-Timing Engine
+export * from './stopping-rules.js'
+

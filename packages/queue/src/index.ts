@@ -48,3 +48,11 @@ export function getQueue(name: QueueName): Queue {
   }
   return q
 }
+
+export async function closeAllQueues(): Promise<void> {
+  for (const q of queueCache.values()) {
+    await q.close()
+  }
+  queueCache.clear()
+}
+

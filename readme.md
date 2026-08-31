@@ -50,22 +50,153 @@ Grabit closes the loop:
 
 ## High Level Architecture
 
-<!-- 
-  PASTE ARCHITECTURE DIAGRAM HERE 
-  (Main flow diagram)
--->
+The architecture is built around an event-driven, decoupled pipeline designed for high-throughput webhook ingestion, deterministic rule evaluation, AI-driven recovery messaging, and recovery ledger + audit logging.
+
+```
++---------------------------------------------------------------------------------------------------+
+|                                      EXTERNAL ACTORS & APIS                                       |
+|  +--------------------+         +-----------------------+         +----------------------------+  |
+|  |  Razorpay Webhooks |         | Customer (WhatsApp)   |         | Merchant Ops (Dashboard)   |  |
+|  +---------+----------+         +-----------^-----------+         +-------------^--------------+  |
++------------|--------------------------------|-----------------------------------|-----------------+
+             | (HMAC-SHA256 Signed)           | (One-click Link / Re-auth)        | (REST / Review)
+             v                                |                                   v
++---------------------------------------------------------------------------------------------------+
+| INGESTION & API GATEWAY (Hono + TypeScript)                                                       |
+|   /webhooks/razorpay  •  /api/hitl  •  /api/ledger  •  /api/dashboard  •  /health                 |
+|   - Signature verification + payload parsing/casting                                             |
+|   - Currency normalization (Paise -> INR Decimal)                                                 |
+|   - Enqueue to BullMQ Ingest Queue                                                                |
++---------------------------------------------+-----------------------------------------------------+
+                                              |
+                                              v
++---------------------------------------------------------------------------------------------------+
+| ASYNCHRONOUS PROCESSING PIPELINE (BullMQ + Redis 6380)                                            |
+|                                                                                                   |
+|  +-----------------------+      +--------------------------+      +----------------------------+  |
+|  |   1. Ingest Worker    | ---> |    2. Recovery Worker    | ---> |    3. AI Agent Service (planned) |  |
+|  |   - Dedupe & Normalize|      |   - Stopping Rules Gate  |      |   (Python/Agno/FastAPI)    |  |
+|  |   - Create Failure &  |      |   - Quiet Hours (IST)    |      |   - Failure Diagnosis      |  |
+|  |     Recovery Job      |      |   - Salary Window Check  |      |   - Hinglish Copy Gen      |  |
+|  +-----------------------+      +-------------+------------+      +-------------+--------------+  |
+|                                               |                                 |                 |
+|                                 +-------------+------------+                    v                 |
+|                                 |                          |      +----------------------------+  |
+|                                 v                          v      |     4. Message Worker      |  |
+|                     +-----------------------+  +----------------+ |   - WhatsApp Dispatch      |  |
+|                     |     5. HITL Worker    |  | Followup Worker| |   - Delivery Tracking      |  |
+|                     |  - High Value (>=10k) |  | - Smart Delays | +----------------------------+  |
+|                     |  - Low Confidence     |  | - Backoff Loop |                                 |
+|                     +-----------------------+  +----------------+                                 |
++---------------------------------------------+-----------------------------------------------------+
+                                              |
+                                              v
++---------------------------------------------------------------------------------------------------+
+| PERSISTENCE & DATA LAYER (PostgreSQL 5433 + Prisma ORM)                                           |
+|   • failed_payments   • recovery_jobs    • recovery_messages                                      |
+|   • hitl_tasks        • recovery_ledger  • audit_logs                                             |
++---------------------------------------------------------------------------------------------------+
+```
 
 ![Architecture Diagram](./docs/architecture.png)
 
 ---
 
-## System Flow =
+## System Flow
+
+The end-to-end recovery lifecycle follows an automated 6-step state transition:
+
+```
+[ Razorpay Failure Event ]
+           |
+           v
++----------------------+
+| 1. Ingest & Verify   | ---> Validate Signature -> Paise-to-INR Conversion -> Idempotently create `failed_payments`; ignore duplicate webhooks
++----------+-----------+
+           |
+           v
++----------------------+
+| 2. Stopping Rules &  | ---> Checks: Already paid? Max follow-ups? Hard decline? Stale (>24h)?
+|    Timing Filter     |
++----------+-----------+
+           |
+     +-----+----------------------------------+
+     | Passes Rules                           | Rule Triggered
+     v                                        v
++----------------------+             +----------------------------------------------------------+
+| 3. AI Agent Decision |             | - High Value (>=10k) / Low Confidence -> HITL Escalation |
+|    & Copy Generation |             | - Quiet Hours (21:00-08:00 IST) / Salary Gap -> Delay    |
++----------+-----------+             | - Hard Decline / Max Follow-ups -> Mark Unrecovered      |
+           |                         +----------------------------------------------------------+
+           v
++----------------------+
+| 4. WhatsApp Outreach | ---> Sends personalized one-click recovery message via WhatsApp API
++----------+-----------+
+           |
+           v
++----------------------+
+| 5. Customer Action   | ---> Customer clicks one-click link or updates mandate via Razorpay
++----------+-----------+
+           |
+           v
++----------------------+
+| 6. Reconciliation    | ---> Payment Webhook -> Mark `recovered` -> Record in `recovery_ledger`
++----------------------+
+```
 
 ![System Flow](./docs/system_flow.png)
 
 ---
 
-## Database Schema 
+## Database Schema
+
+The database model is strictly relational with foreign key integrity, audit logging, and normalized Decimal money handling (stored in INR Rupees).
+
+```
++---------------------------+             +---------------------------+
+|      failed_payments      | 1         1 |       recovery_jobs       |
++---------------------------+-------------+---------------------------+
+| id (PK, UUID)             |             | id (PK, UUID)             |
+| razorpay_payment_id (UQ)  |             | failed_payment_id (FK)    |
+| razorpay_order_id         |             | status (enum)             |
+| amount (Decimal, INR)     |             | failure_type (enum)       |
+| currency (default: 'INR') |             | follow_up_count (int)     |
+| failure_code / reason     |             | max_follow_ups (default 2)|
+| failure_source (enum)     |             | next_attempt_at (tz)      |
+| customer_phone / email    |             | created_at / updated_at   |
+| raw_payload (jsonb)       |             +-------------+-------------+
++---------------------------+                           |
+                                      +-----------------+-----------------+
+                                    1 |                                 1 |
+                                      v                                   v
+                        +---------------------------+       +---------------------------+
+                        |     recovery_messages     |       |        hitl_tasks         |
+                        +---------------------------+       +---------------------------+
+                        | id (PK, UUID)             |       | id (PK, UUID)             |
+                        | recovery_job_id (FK)      |       | recovery_job_id (FK)      |
+                        | template_name             |       | status (enum)             |
+                        | rendered_body (text)      |       | priority (enum)           |
+                        | recovery_url (text)       |       | reason (text)             |
+                        | status (enum)             |       | reviewer_notes (text)     |
+                        | sent_at / delivered_at    |       | assigned_to / resolved_at |
+                        +---------------------------+       +---------------------------+
+                                                                          |
+                                      +-----------------------------------+
+                                    1 |
+                                      v
+                        +---------------------------+       +---------------------------+
+                        |      recovery_ledger      |       |        audit_logs         |
+                        +---------------------------+       +---------------------------+
+                        | id (PK, UUID)             |       | id (PK, UUID)             |
+                        | recovery_job_id (FK, UQ)  |       | entity_type (text)        |
+                        | failed_payment_id (FK)    |       | entity_id (UUID)          |
+                        | amount (Decimal, INR)     |       | action (text)             |
+                        | status (enum)             |       | actor_type / actor_id     |
+                        | recovery_method (enum)    |       | old_state / new_state(jb) |
+                        | recovered_at (tz)         |       | created_at (tz)           |
+                        +---------------------------+       +---------------------------+
+```
+
 ![Db Schema](./docs/db_schema.png)
 
 ## Tech Stack

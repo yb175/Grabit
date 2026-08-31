@@ -149,7 +149,7 @@ model RecoveryJob {
   /// How many follow-up messages already sent (stopping rule: >= max).
   followUpCount   Int               @default(0) @map("follow_up_count")
   /// Max follow-ups allowed for this case (policy: by failure type/amount).
-  maxFollowUps    Int               @default(3) @map("max_follow_ups")
+  maxFollowUps    Int               @default(2) @map("max_follow_ups")
   /// When the next attempt is allowed (smart timing: quiet hours, salary
   /// windows, retry gaps). The scheduler polls this.
   nextAttemptAt   DateTime?         @map("next_attempt_at") @db.Timestamptz(3)

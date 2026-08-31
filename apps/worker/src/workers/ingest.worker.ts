@@ -97,7 +97,7 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
       failedPaymentId: failedPayment.id,
       status: 'pending',
       failureType,
-      maxFollowUps: 3,
+      maxFollowUps: 2,
     },
   })
 
