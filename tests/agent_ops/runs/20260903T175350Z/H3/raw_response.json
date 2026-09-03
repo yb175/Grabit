@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 3247,
+  "response": {
+    "decision_type": "stop",
+    "failure_type": "hard",
+    "explanation": "The bank has flagged this account or card as invalid, making it permanently unable to process payments.",
+    "customer_message": "",
+    "action_payload": {},
+    "confidence": 1.0,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "invalid_account",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

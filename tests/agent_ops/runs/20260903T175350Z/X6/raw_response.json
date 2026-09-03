@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 5278,
+  "response": {
+    "decision_type": "escalate_hitl",
+    "failure_type": "soft",
+    "explanation": "Payment failure reason is unknown, recommending a delay before retry.",
+    "customer_message": "",
+    "action_payload": {},
+    "confidence": 0.5,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": true,
+    "taxonomy_match": null,
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

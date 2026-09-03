@@ -1,0 +1,14 @@
+{
+  "decision_type": "one_click",
+  "failure_type": "autopay_failed",
+  "explanation": "The automated mandate execution failed to process the payment.",
+  "customer_message": "Your autopay mandate failed to execute. Please click the link below to complete your payment of ₹1499 manually.",
+  "action_payload": {},
+  "confidence": 0.95,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "should_escalate_hitl": false,
+  "taxonomy_match": "emandate_execution_failed",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ]
+}

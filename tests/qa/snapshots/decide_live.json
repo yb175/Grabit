@@ -1,0 +1,11 @@
+{
+  "decision_type": "one_click",
+  "failure_type": "soft",
+  "confidence": 0.98,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "should_escalate_hitl": false,
+  "taxonomy_match": "insufficient_funds",
+  "tools_used": ["lookup_failure_taxonomy"],
+  "customer_message": "<model-generated copy redacted from QA artifact>",
+  "api_key": "<redacted>"
+}

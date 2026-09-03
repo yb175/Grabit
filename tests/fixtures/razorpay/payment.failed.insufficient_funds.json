@@ -1,0 +1,1 @@
+{"event":"payment.failed","payload":{"payment":{"entity":{"id":"pay_qa_<unique>","order_id":"order_qa","amount":149900,"currency":"INR","method":"upi","error_code":"insufficient_funds","error_description":"Insufficient funds","contact":"+919999999999","email":"qa@example.com","notes":{"customer_name":"QA"}}}}}

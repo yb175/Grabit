@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 2921,
+  "decision_type": "delay",
+  "failure_type": "soft",
+  "confidence": 0.95,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "issuer_unavailable",
+  "customer_message": "We couldn't process your payment due to a temporary provider issue. Please try again in a few minutes.",
+  "explanation": "The payment provider is currently experiencing issues. Please try again shortly to complete your payment."
+}

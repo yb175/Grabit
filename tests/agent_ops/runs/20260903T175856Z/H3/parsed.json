@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 3120,
+  "decision_type": "stop",
+  "failure_type": "hard",
+  "confidence": 1.0,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "invalid_account",
+  "customer_message": "",
+  "explanation": "The bank has identified this account or card as invalid, which is a permanent failure condition."
+}

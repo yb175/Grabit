@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 2628,
+  "response": {
+    "decision_type": "stop",
+    "failure_type": "autopay_cancelled",
+    "explanation": "The payment mandate has been revoked by the customer at the bank.",
+    "customer_message": "",
+    "action_payload": {},
+    "confidence": 1.0,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "mandate_revoked",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

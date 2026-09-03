@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 3735,
+  "response": {
+    "decision_type": "one_click",
+    "failure_type": "soft",
+    "explanation": "Payment failed due to insufficient funds.",
+    "customer_message": "Your payment failed because there were insufficient funds in your account. Please use your payment link to try again.",
+    "action_payload": {},
+    "confidence": 0.95,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "insufficient_funds",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 2012,
+  "response": {
+    "decision_type": "one_click",
+    "failure_type": "soft",
+    "explanation": "General payment processing error; retrying via one-click flow.",
+    "customer_message": "Your recent payment did not go through due to a technical error. Please use your payment link to try again.",
+    "action_payload": {},
+    "confidence": 0.65,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": null,
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

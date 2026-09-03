@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 1790,
+  "decision_type": "escalate_hitl",
+  "failure_type": "hard",
+  "confidence": 1.0,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": true,
+  "taxonomy_match": "stolen_card",
+  "customer_message": "",
+  "explanation": "Payment declined due to a reported stolen card; card issuer has restricted further transactions."
+}

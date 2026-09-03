@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 2470,
+  "response": {
+    "decision_type": "one_click",
+    "failure_type": "autopay_failed",
+    "explanation": "The UPI Autopay execution failed for the active mandate.",
+    "customer_message": "Your recent autopay attempt failed. Please use your payment link to complete the payment for your subscription.",
+    "action_payload": {},
+    "confidence": 0.95,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "emandate_execution_failed",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

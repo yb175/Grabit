@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 557,
+  "response": {
+    "decision_type": "escalate_hitl",
+    "failure_type": "soft",
+    "explanation": "Bounded fallback: HTTPError",
+    "customer_message": "",
+    "action_payload": {},
+    "confidence": 0.5,
+    "model_version": "fallback",
+    "should_escalate_hitl": true,
+    "taxonomy_match": "insufficient_funds",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

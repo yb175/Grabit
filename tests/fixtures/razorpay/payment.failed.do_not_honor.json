@@ -1,0 +1,1 @@
+{"event":"payment.failed","payload":{"payment":{"entity":{"id":"pay_qa_<unique>","order_id":"order_qa","amount":149900,"currency":"INR","method":"card","error_code":"do_not_honor","error_description":"Do not honor","contact":"+919999999999","email":"qa@example.com","notes":{"customer_name":"QA"}}}}}

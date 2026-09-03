@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 3255,
+  "decision_type": "one_click",
+  "failure_type": "soft",
+  "confidence": 1.0,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "insufficient_funds",
+  "customer_message": "Your payment failed due to insufficient funds in your account. Please click here to retry your payment: https://pay.link/pay_opsX1",
+  "explanation": "insufficient_funds"
+}

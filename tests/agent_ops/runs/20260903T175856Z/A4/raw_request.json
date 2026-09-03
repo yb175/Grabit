@@ -1,0 +1,19 @@
+{
+  "job_id": "11111111-1111-1111-1111-111111111113",
+  "failed_payment": {
+    "razorpay_payment_id": "pay_opsA4",
+    "amount": 599,
+    "currency": "INR",
+    "failure_code": "mandate_revoked",
+    "failure_reason": "Mandate revoked by customer at bank, autopay paused",
+    "failure_source": "mandate",
+    "payment_method": "emandate",
+    "customer_name": "Customer",
+    "customer_phone": "+919xxxxxxxxx"
+  },
+  "job": {
+    "follow_up_count": 0,
+    "max_follow_ups": 2,
+    "status": "pending"
+  }
+}

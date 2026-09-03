@@ -1,0 +1,1 @@
+{"input":{"decision_type":"one_click","failure_type":"hard","offer_discount":10},"result":"rejected: extra key / hard failure cannot one-click"}

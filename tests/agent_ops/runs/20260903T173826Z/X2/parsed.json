@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 5762,
+  "decision_type": "one_click",
+  "failure_type": "soft",
+  "confidence": 0.95,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "temporary_decline",
+  "customer_message": "Your recent payment failed due to a temporary issue. Please use the link below to try your payment again.",
+  "explanation": "The payment experienced a temporary technical decline."
+}

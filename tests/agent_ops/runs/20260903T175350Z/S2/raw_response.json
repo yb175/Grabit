@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 3146,
+  "response": {
+    "decision_type": "delay",
+    "failure_type": "soft",
+    "explanation": "The bank issuer is currently experiencing downtime or a timeout.",
+    "customer_message": "Your payment failed because your bank's server is temporarily unavailable. Please try again using your payment link in a few minutes.",
+    "action_payload": {},
+    "confidence": 1.0,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "issuer_unavailable",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

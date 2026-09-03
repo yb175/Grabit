@@ -1,0 +1,8 @@
+{
+  "hard_decline": {"status": "unrecovered", "ai_called": false},
+  "max_follow_ups_2": {"status": "unrecovered", "ai_called": false},
+  "quiet_hours": {"status": "waiting", "next_attempt_at": "08:00 IST"},
+  "stale_24h": {"status": "stale", "ai_called": false},
+  "hitl_rejected": {"status": "rejected", "ai_called": false},
+  "high_amount": {"status": "hitl", "ai_called": false}
+}

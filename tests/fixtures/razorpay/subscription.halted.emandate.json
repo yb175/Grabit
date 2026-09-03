@@ -1,0 +1,1 @@
+{"event":"subscription.halted","payload":{"subscription":{"entity":{"id":"sub_qa_<unique>","payment_id":null,"customer_id":"cust_qa","notes":{"customer_name":"QA"}}}}}
