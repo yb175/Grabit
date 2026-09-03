@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 2545,
+  "decision_type": "one_click",
+  "failure_type": "autopay_failed",
+  "confidence": 0.98,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "emandate_execution_failed",
+  "customer_message": "Your recent autopay attempt failed due to insufficient funds. Please ensure your account has enough balance and use your payment link to retry.",
+  "explanation": "Emandate debit failed due to insufficient funds in the customer account."
+}

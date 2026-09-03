@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 1919,
+  "response": {
+    "decision_type": "one_click",
+    "failure_type": "soft",
+    "explanation": "The payment attempt failed due to a temporary debit error.",
+    "customer_message": "Your recent payment of 89 INR failed due to a temporary debit error. Please use the link below to try again.",
+    "action_payload": {},
+    "confidence": 0.95,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "debit_failed",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

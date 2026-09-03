@@ -1,0 +1,9 @@
+{
+  "http_status": 200,
+  "response": {"accepted": true, "enqueued": true},
+  "db": {
+    "failed_payment": {"razorpay_payment_id": "pay_qa_<redacted>", "amount_rupees": "1499.00", "currency": "INR"},
+    "recovery_job": {"status": "waiting", "failure_type": "soft"}
+  },
+  "secret_redacted": true
+}

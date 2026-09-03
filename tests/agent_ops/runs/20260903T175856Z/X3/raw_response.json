@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 4507,
+  "response": {
+    "decision_type": "delay",
+    "failure_type": "soft",
+    "explanation": "The failure reason provided is vague and lacks a specific error code, necessitating a delay before retrying.",
+    "customer_message": "We were unable to process your payment. Please try again shortly using your payment link.",
+    "action_payload": {},
+    "confidence": 0.7,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": null,
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

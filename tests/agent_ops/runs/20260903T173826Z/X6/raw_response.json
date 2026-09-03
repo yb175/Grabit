@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 2299,
+  "response": {
+    "decision_type": "one_click",
+    "failure_type": "soft",
+    "explanation": "The payment failed due to an unspecified technical error at the gateway.",
+    "customer_message": "Your recent payment attempt did not go through. Please use the link below to retry the transaction seamlessly.",
+    "action_payload": {},
+    "confidence": 0.75,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "technical_failure",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

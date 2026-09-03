@@ -1,0 +1,19 @@
+{
+  "job_id": "11111111-1111-1111-1111-111111111117",
+  "failed_payment": {
+    "razorpay_payment_id": "pay_opsX4",
+    "amount": 2199,
+    "currency": "INR",
+    "failure_code": "issuer_unavailable",
+    "failure_reason": "Customer claims this is fraud, transaction not authorized",
+    "failure_source": "payment",
+    "payment_method": "card",
+    "customer_name": "Customer",
+    "customer_phone": "+919xxxxxxxxx"
+  },
+  "job": {
+    "follow_up_count": 0,
+    "max_follow_ups": 2,
+    "status": "pending"
+  }
+}

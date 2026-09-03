@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 3065,
+  "response": {
+    "decision_type": "one_click",
+    "failure_type": "soft",
+    "explanation": "The payment experienced a temporary decline; retrying is appropriate.",
+    "customer_message": "Your recent payment attempt was temporarily declined. Please click your payment link to try again.",
+    "action_payload": {},
+    "confidence": 0.95,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "temporary_decline",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

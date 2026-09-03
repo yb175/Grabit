@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 4246,
+  "decision_type": "one_click",
+  "failure_type": "soft",
+  "confidence": 0.75,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "generic_payment_failure",
+  "customer_message": "Your recent UPI payment of ₹1299 did not go through. Please tap below to retry the payment.",
+  "explanation": "General payment gateway rejection for UPI transaction."
+}

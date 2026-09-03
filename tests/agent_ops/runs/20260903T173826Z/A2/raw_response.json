@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 4662,
+  "response": {
+    "decision_type": "one_click",
+    "failure_type": "soft",
+    "explanation": "Emandate debit failed due to insufficient funds in the account.",
+    "customer_message": "Your payment of 999 INR failed due to insufficient funds. Please ensure your account has sufficient balance and try again: one_click_link",
+    "action_payload": {},
+    "confidence": 0.98,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "insufficient_funds",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

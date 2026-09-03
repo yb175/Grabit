@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 5051,
+  "response": {
+    "decision_type": "delay",
+    "failure_type": "soft",
+    "explanation": "The payment gateway timed out during the netbanking process.",
+    "customer_message": "Your recent payment timed out due to a temporary gateway issue. Please try again using your payment link.",
+    "action_payload": {},
+    "confidence": 0.95,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "gateway_timeout",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

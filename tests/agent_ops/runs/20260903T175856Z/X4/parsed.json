@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 3500,
+  "decision_type": "escalate_hitl",
+  "failure_type": "soft",
+  "confidence": 0.95,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": true,
+  "taxonomy_match": null,
+  "customer_message": "",
+  "explanation": "Transaction reported as unauthorized and fraudulent by the customer."
+}

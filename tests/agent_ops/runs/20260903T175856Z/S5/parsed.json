@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 2341,
+  "decision_type": "one_click",
+  "failure_type": "soft",
+  "confidence": 0.95,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "insufficient_funds",
+  "customer_message": "Your subscription payment was unsuccessful due to insufficient funds. Please use your payment link to retry the transaction.",
+  "explanation": "The payment failed due to insufficient funds in the customer's account."
+}

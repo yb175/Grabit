@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 3378,
+  "decision_type": "stop",
+  "failure_type": "hard",
+  "confidence": 1.0,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "stolen_card",
+  "customer_message": "",
+  "explanation": "Card reported as stolen by the issuing bank."
+}
