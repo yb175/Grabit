@@ -1,0 +1,5 @@
+{
+  "decision_type": "one_click",
+  "customer_message": "Your payment failed due to insufficient funds. Please ensure your balance is sufficient and click here to retry: [link]",
+  "model_version": "gemini-3.1-flash-lite-preview"
+}

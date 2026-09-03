@@ -1,4 +1,5 @@
-# Agno agent framework — powers Grabit's failure-diagnosis agents.
-agno
-fastapi
-uvicorn[standard]
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pydantic>=2.8,<3
+pytest>=8,<9
+httpx>=0.27,<1

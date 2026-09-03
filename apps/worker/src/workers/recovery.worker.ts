@@ -21,6 +21,44 @@ import {
 } from '@grabit/core'
 import { QUEUES, getQueue } from '@grabit/queue'
 
+interface AgentResponse {
+  decision_type: 'stop' | 'delay' | 'one_click' | 'escalate_hitl'
+  failure_type: 'hard' | 'soft' | 'autopay_failed' | 'autopay_cancelled'
+  explanation: string
+  customer_message: string
+  action_payload: Record<string, unknown>
+  confidence: number
+  model_version: string
+  should_escalate_hitl: boolean
+  taxonomy_match: string | null
+  tools_used: string[]
+}
+
+async function callAgent(job: any): Promise<AgentResponse> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10_000)
+  try {
+    const response = await fetch(`${config.aiAgentUrl}/v1/decide`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, signal: controller.signal,
+      body: JSON.stringify({
+        job_id: job.id,
+        failed_payment: {
+          razorpay_payment_id: job.failedPayment.razorpayPaymentId,
+          amount: Number(job.failedPayment.amount), currency: job.failedPayment.currency,
+          failure_code: job.failedPayment.failureCode, failure_reason: job.failedPayment.failureReason,
+          failure_source: job.failedPayment.failureSource, payment_method: job.failedPayment.paymentMethod ?? 'upi',
+          customer_name: job.failedPayment.customerName, customer_phone: job.failedPayment.customerPhone,
+        },
+        job: { follow_up_count: job.followUpCount, max_follow_ups: job.maxFollowUps, status: job.status },
+      }),
+    })
+    if (!response.ok) throw new Error(`agent HTTP ${response.status}`)
+    const result = await response.json() as AgentResponse
+    if (!['stop', 'delay', 'one_click', 'escalate_hitl'].includes(result.decision_type)) throw new Error('invalid agent decision')
+    return result
+  } finally { clearTimeout(timer) }
+}
+
 export interface RecoveryJobData {
   recoveryJobId: string
   aiConfidence?: number
@@ -332,7 +370,45 @@ export async function processRecoveryJob(
           update: {},
         }),
       ])
-      // Next stage planned: Call Python AI Agent for failure explanation & message copy
+      let agent: AgentResponse
+      try {
+        agent = await callAgent(job)
+      } catch (error) {
+        // Bounded TS fallback: the worker must never crash because the agent is down.
+        agent = {
+          decision_type: 'escalate_hitl', failure_type: job.failureType,
+          explanation: `AI unavailable: ${error instanceof Error ? error.message : 'unknown error'}`,
+          customer_message: '', action_payload: {}, confidence: 0, model_version: 'fallback',
+          should_escalate_hitl: true, taxonomy_match: job.failedPayment.failureCode,
+          tools_used: [],
+        }
+      }
+      const decisionId = stableUuid(`agent-decision:${job.id}`)
+      const actionPayload = {
+        ...agent.action_payload,
+        customer_message: agent.customer_message,
+        taxonomy_match: agent.taxonomy_match,
+        model_version: agent.model_version,
+        tools_used: agent.tools_used,
+      }
+      await prisma.agentDecision.upsert({
+        where: { id: decisionId },
+        create: { id: decisionId, recoveryJobId: job.id, decisionType: agent.decision_type, explanation: agent.explanation, actionPayload, confidence: agent.confidence, modelVersion: agent.model_version },
+        update: { explanation: agent.explanation, actionPayload, confidence: agent.confidence, modelVersion: agent.model_version },
+      })
+      await prisma.auditLog.upsert({
+        where: { id: stableUuid(`audit:agent_decision:${job.id}`) },
+        create: { id: stableUuid(`audit:agent_decision:${job.id}`), entityType: 'recovery_jobs', entityId: job.id, action: 'agent_decision', oldValue: {}, newValue: actionPayload, performedBy: 'agent' },
+        update: {},
+      })
+      if (agent.decision_type === 'one_click' && agent.customer_message && job.failedPayment.customerPhone) {
+        await getQueue('message').add('send-recovery-message', { recoveryJobId: job.id, toPhone: job.failedPayment.customerPhone, messageBody: agent.customer_message })
+      } else if (agent.decision_type === 'escalate_hitl' || agent.should_escalate_hitl) {
+        const hitlTaskId = stableUuid(`hitl-task:${job.id}`)
+        await prisma.hitlQueue.upsert({ where: { id: hitlTaskId }, create: { id: hitlTaskId, recoveryJobId: job.id, reason: agent.explanation, status: 'pending' }, update: {} })
+        await prisma.recoveryJob.update({ where: { id: job.id }, data: { status: 'hitl' } })
+        await getQueue('hitl').add('review', { recoveryJobId: job.id, reason: agent.explanation }, { jobId: stableUuid(`hitl-review:${job.id}`) })
+      }
       break
     }
   }

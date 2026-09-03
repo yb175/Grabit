@@ -1,6 +1,6 @@
 [project]
 name = "grabit-ai-agent"
 version = "0.0.1"
-description = "Grabit AI diagnosis agent (Agno + FastAPI)"
+description = "Bounded Grabit AI diagnosis and recovery copy service"
 requires-python = ">=3.11"
-dependencies = ["agno", "fastapi", "uvicorn[standard]"]
+dependencies = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1", "pydantic>=2.8,<3"]

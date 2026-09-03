@@ -59,7 +59,7 @@ async function seedJob(opts: {
   return { failedPayment, job }
 }
 
-test('recovery: happy path daytime soft failure advances to status=processing', async () => {
+test('recovery: daytime soft failure records bounded fallback and escalates safely', async () => {
   const { job } = await seedJob({ amount: 1500, failureType: 'soft' })
   const daytime = fromISTComponents(2025, 5, 10, 11, 0, 0)
 
@@ -70,13 +70,13 @@ test('recovery: happy path daytime soft failure advances to status=processing', 
   assert.equal(result.decision?.shouldCallAi, true)
 
   const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
-  assert.equal(updated.status, 'processing')
+  assert.equal(updated.status, 'hitl')
 
   const logs = await prisma.auditLog.findMany({
     where: { entityId: job.id, entityType: 'recovery_jobs' },
   })
-  assert.equal(logs.length, 1)
-  assert.equal(logs[0].action, 'stopping_rules_passed')
+  assert.equal(logs.some((log) => log.action === 'stopping_rules_passed'), true)
+  assert.equal(logs.some((log) => log.action === 'agent_decision'), true)
 })
 
 test('recovery: max follow-ups exceeded marks status=unrecovered and creates ledger row', async () => {

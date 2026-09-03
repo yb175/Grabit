@@ -14,7 +14,7 @@ import { Worker } from 'bullmq'
 import { prisma, Prisma } from '@grabit/db'
 import { config } from '@grabit/config'
 import { classifyFailure, failureSource, type RazorpayWebhookEvent } from '@grabit/core'
-import { QUEUES } from '@grabit/queue'
+import { QUEUES, getQueue } from '@grabit/queue'
 
 /// Shape the API puts on the queue (see apps/api/src/routes/webhooks.ts).
 export interface IngestJobData {
@@ -106,8 +106,6 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
     `job ${recoveryJob.id} (${failureType})`,
   )
 
-  // TODO(next slice): enqueue QUEUES.recovery job for AI diagnosis.
-
   return {
     outcome: 'created',
     failedPaymentId: failedPayment.id,
@@ -123,6 +121,11 @@ export function startIngestWorker(): Worker<IngestJobData> {
     QUEUES.ingest,
     async (job) => {
       const result = await processIngestEvent(job.data)
+      if (result.recoveryJobId) {
+        await getQueue('recovery').add('evaluate-recovery', {
+          recoveryJobId: result.recoveryJobId,
+        })
+      }
       // Duplicates are a success from the queue's perspective.
       return result
     },
