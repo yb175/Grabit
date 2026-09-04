@@ -13,5 +13,6 @@ import { PrismaClient, Prisma } from '@prisma/client'
 // Re-exported so apps never need @prisma/client as a direct dependency —
 // @grabit/db is the single owner of everything Prisma.
 export { Prisma }
+export type { FailureType, HitlStatus, RecoveryJobStatus } from '@prisma/client'
 
 export const prisma = new PrismaClient()

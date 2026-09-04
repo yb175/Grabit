@@ -14,15 +14,17 @@ import { prisma } from '@grabit/db'
 import { config } from '@grabit/config'
 import { startIngestWorker } from './workers/ingest.worker.js'
 import { startRecoveryWorker } from './workers/recovery.worker.js'
+import { startMessageWorker } from './workers/message.worker.js'
 
 console.log(`[grabit-worker] starting (redis: ${config.redisUrl})`)
 
 const ingestWorker = startIngestWorker()
 const recoveryWorker = startRecoveryWorker()
+const messageWorker = startMessageWorker()
 
 async function shutdown(signal: string) {
   console.log(`[grabit-worker] ${signal} received — shutting down`)
-  await Promise.all([ingestWorker.close(), recoveryWorker.close()])
+  await Promise.all([ingestWorker.close(), recoveryWorker.close(), messageWorker.close()])
   await prisma.$disconnect()
   process.exit(0)
 }
