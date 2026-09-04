@@ -12,6 +12,8 @@ import { fromISTComponents, toISTComponents } from '@grabit/core'
 import { getQueue, closeAllQueues } from '@grabit/queue'
 import { processRecoveryJob, stableUuid, buildAgentPayload } from '../src/workers/recovery.worker.js'
 
+const originalMessageChannel = config.messageChannel
+config.messageChannel = 'mock'
 const paymentIds: string[] = []
 const uniqPaymentId = () => {
   const id = `pay_rec_test_${Date.now()}_${Math.floor(Math.random() * 1e6)}`
@@ -25,6 +27,7 @@ after(async () => {
     where: { razorpayPaymentId: { in: paymentIds } },
   })
   await closeAllQueues()
+  config.messageChannel = originalMessageChannel
   await prisma.$disconnect()
 })
 
@@ -69,8 +72,11 @@ async function seedJob(opts: {
 test('recovery: daytime soft failure records bounded fallback and escalates safely', async () => {
   const { job } = await seedJob({ amount: 1500, failureType: 'soft' })
   const daytime = fromISTComponents(2025, 5, 10, 11, 0, 0)
+  const originalAiAgentUrl = config.aiAgentUrl
+  config.aiAgentUrl = 'http://127.0.0.1:1'
 
   const result = await processRecoveryJob({ recoveryJobId: job.id }, daytime)
+  config.aiAgentUrl = originalAiAgentUrl
 
   assert.equal(result.outcome, 'completed')
   assert.equal(result.decision?.action, 'continue')

@@ -11,7 +11,7 @@
 
 `demo-only`
 
-> The decision spine, cryptographic ingress, stopping rules, AI contract guardrails, HITL review, and audit persistence are fully implemented and verified. However, downstream outbound actuation (`message.worker.ts`), followup scheduling (`followup.worker.ts`), and reporting API endpoints (`/ledger`, `/dashboard`, `/audit`) are currently stubs (`export {}`).
+> The decision spine, cryptographic ingress, stopping rules, AI contract guardrails, HITL review, payment-link generation, and outbound email/WhatsApp actuation are implemented and verified. Follow-up scheduling, HITL notifications, and reporting API aggregation remain outside this slice.
 
 ---
 
@@ -27,7 +27,7 @@
 | **6. Payment Link Service** | Implemented | `packages/core/src/payment-link.ts` |
 | **7. HITL Review API** | Implemented | `apps/api/src/routes/hitl.ts` |
 | **8. Jobs Inspection & Timeline API** | Implemented | `apps/api/src/routes/jobs.ts` |
-| **9. Message Queue Worker (Outbound Send)** | **Stub** | `apps/worker/src/workers/message.worker.ts` (`export {}`) |
+| **9. Message Queue Worker (Outbound Send)** | Implemented | `apps/worker/src/workers/message.worker.ts` — Gmail SMTP, Meta Cloud API, mock CI provider |
 | **10. Followup Scheduler Worker** | **Stub** | `apps/worker/src/workers/followup.worker.ts` (`export {}`) |
 | **11. HITL Notification Worker** | **Stub** | `apps/worker/src/workers/hitl.worker.ts` (`export {}`) |
 | **12. Ledger & Audit DB Persistence** | Implemented | `packages/db/prisma/schema.prisma`, `apps/worker/src/workers/recovery.worker.ts` |
@@ -47,8 +47,8 @@
 | **Data / PII Hygiene** | **5/5** | Customer phone, email, and full name are stripped in `buildAgentPayload` before LLM invocation. |
 | **API Surface** | **3/5** | `/webhooks`, `/jobs`, `/hitl`, and `/health` fully functional; `/dashboard`, `/ledger`, `/audit` are stubs returning empty objects. |
 | **Observability & Audit Trail** | **4/5** | DB tables `agent_decisions`, `audit_logs`, and `recovery_ledger` record all actions, reasons, and state transitions; timeline endpoint functional. |
-| **Tests vs Reality** | **5/5** | 108 tests passing across core, api, worker, agent-ops, and demo batch. Unit mocks separate from live golden set. |
-| **Demo Honesty** | **3/5** | End-to-end decision spine and database lifecycle are 100% genuine; downstream messaging actuation is explicitly marked stubbed. |
+| **Tests vs Reality** | **5/5** | 115 automated tests passing across core, api, worker, agent, and demo batch. Live Gemini golden set and real Gmail/Razorpay E2E were also exercised. |
+| **Demo Honesty** | **4/5** | Decision spine, real Razorpay test links, and real Gmail SMTP sends are genuine; live WhatsApp remains dependent on Meta template approval. |
 
 ---
 
@@ -98,7 +98,7 @@
 | D1 | AI re-entry guard on retried job | Reuses existing `agent_decisions`, no extra LLM call | Stored decision reused; HTTP call skipped | **PASS** | `pnpm --filter @grabit/worker test` |
 | D2 | Outbound message queue deduplication | Deterministic `jobId` preventing duplicate queue entry | `jobId = stableUuid(message:${job.id}:${followUpCount})` | **PASS** | `pnpm --filter @grabit/worker test` |
 | D3 | Payment link generation idempotency | Reuses existing Razorpay payment link | Stored `paymentLinkId` and `paymentLinkUrl` reused | **PASS** | `pnpm --filter @grabit/worker test` |
-| D4 | Outbound message worker execution | Send WhatsApp message via provider | **BLOCKED** (`message.worker.ts` stubbed) | **BLOCKED** | N/A |
+| D4 | Outbound message worker execution | Send via selected provider | Gmail SMTP sends real email; WhatsApp Cloud payload covered by provider test | **PASS** | `pnpm --filter @grabit/worker test` |
 | D5 | Followup scheduler worker execution | Poll and re-evaluate waiting jobs | **BLOCKED** (`followup.worker.ts` stubbed) | **BLOCKED** | N/A |
 
 ---
@@ -133,6 +133,10 @@ Live golden set executed against `POST /v1/decide` with real model (no mocks). R
 - **P0 Live Alerts:** 0
 - **Resilience:** Fallback caught provider rate-limiting during burst tests; zero unsafe actions emitted.
 
+### Live E2E Delivery Replay — 2026-09-04
+
+The latest golden responses were replayed through the real recovery, Razorpay test Payment Link, and Gmail SMTP stages using `MESSAGE_CHANNEL=email`. Seven genuine emails were accepted by Gmail with real Razorpay test links. Hard, delayed, HITL, and stop decisions correctly sent no email. One case remained blocked by Razorpay's `Too many requests` response; it was retried once after 15 seconds and not hammered further. No mock links or mock emails were sent.
+
 ---
 
 ## Findings
@@ -141,8 +145,8 @@ Live golden set executed against `POST /v1/decide` with real model (no mocks). R
 *None.* Ingress verification, data validation, idempotency guards, and AI safety guardrails are watertight.
 
 ### P1 (High / Production Readiness Gaps)
-- `apps/worker/src/workers/message.worker.ts` — **Outbound WhatsApp messaging is a stub.** The worker file contains `export {}`. Recovery jobs successfully enqueue message jobs to BullMQ, but no physical provider integration (e.g. WhatsApp Cloud API / Twilio) sends the message.
-- `apps/worker/src/workers/followup.worker.ts` — **Followup scheduling worker is a stub.** Recovery jobs in `waiting` status with `next_attempt_at` timestamps are not automatically polled and resumed upon timer expiry.
+- `apps/worker/src/workers/followup.worker.ts` — **Follow-up scheduling remains a stub.** Recovery jobs in `waiting` status are not automatically polled and resumed.
+- `apps/worker/src/workers/message.worker.ts` — Outbound actuation is implemented for Gmail SMTP and Meta WhatsApp Cloud API. Real WhatsApp sends remain dependent on an approved Meta template.
 - `apps/api/src/routes/dashboard.ts`, `ledger.ts`, `audit.ts` — **Analytics & Reporting routes return static stub data.** The database tables `recovery_ledger` and `audit_logs` are populated, but API endpoints return empty structures.
 
 ### P2 (Medium / Operational Hygiene)
@@ -158,10 +162,9 @@ Live golden set executed against `POST /v1/decide` with real model (no mocks). R
 5. **PII Protection:** Customer identifiers (phone numbers, email addresses, names) are sanitized before payload construction for the LLM.
 
 ## What is Stubbed
-1. `apps/worker/src/workers/message.worker.ts` (WhatsApp provider client & send execution).
-2. `apps/worker/src/workers/followup.worker.ts` (Delayed retry poller).
-3. `apps/worker/src/workers/hitl.worker.ts` (External reviewer webhook/notification worker).
-4. `apps/api/src/routes/{dashboard,ledger,audit}.ts` (Dashboard aggregation & ledger query endpoints).
+1. `apps/worker/src/workers/followup.worker.ts` (Delayed retry poller).
+2. `apps/worker/src/workers/hitl.worker.ts` (External reviewer notification worker).
+3. `apps/api/src/routes/{dashboard,ledger,audit}.ts` (Dashboard aggregation & ledger query endpoints).
 
 ---
 
@@ -190,8 +193,10 @@ python3 -m pytest -q apps/ai-agent/tests
 pnpm test
 
 # 8. (Optional) Run Live AI Golden-Set against FastAPI (requires GEMINI_API_KEY in .env)
-# Terminal 1:
-cd apps/ai-agent && uvicorn app.main:app --port 8001
-# Terminal 2:
+docker compose --env-file .env -f infra/docker-compose.yml up -d --build ai-agent
 python3 tests/agent_ops/run_golden_set.py
+
+# 9. Select real Gmail outbound delivery
+# MESSAGE_CHANNEL=email plus SMTP_* variables in .env; use only real payment links.
+
 ```

@@ -3,7 +3,7 @@ from .base import LLMProvider
 
 class GeminiProvider(LLMProvider):
     def __init__(self):
-        self.key = os.getenv('LLM_API_KEY', '')
+        self.key = os.getenv('LLM_API_KEY') or os.getenv('GEMINI_API_KEY', '')
         self.model = os.getenv('LLM_MODEL', 'gemini-3.1-flash-lite-preview')
         self.base = os.getenv('LLM_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta')
     def decide(self, prompt):

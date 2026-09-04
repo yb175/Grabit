@@ -5,12 +5,42 @@ import { prisma } from '@grabit/db'
 import { config } from '@grabit/config'
 import { DEFAULT_STOPPING_RULES_CONFIG } from '@grabit/core'
 import { QUEUES } from '@grabit/queue'
+import nodemailer from 'nodemailer'
 import { stableUuid } from './recovery.worker.js'
+
+export type MessageChannel = 'mock' | 'email' | 'whatsapp'
+
+export interface RecoveryCopySlots {
+  name: string
+  amount: string
+  orderLabel: string
+  why: string
+  action: string
+  link?: string
+}
+
+export interface RenderedRecoveryCopy {
+  text: string
+  subject: string
+  html: string
+}
+
+export function renderRecoveryCopy(slots: RecoveryCopySlots): RenderedRecoveryCopy {
+  const text = `Hi ${slots.name},\nYour payment of ${slots.amount} for ${slots.orderLabel} could not be processed.\n\nWhy this happened: ${slots.why}\n\nWhat you can do: ${slots.action}\n\nUse Pay now to complete the same order.${slots.link ? `\n\nPay now: ${slots.link}` : ''}`
+  const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!)
+  const link = slots.link ? `<p><a href="${escapeHtml(slots.link)}">Pay now</a></p>` : ''
+  return {
+    text,
+    subject: `Your payment of ${slots.amount} for ${slots.orderLabel} could not be processed`,
+    html: `<p>Hi ${escapeHtml(slots.name)},</p><p>Your payment of ${escapeHtml(slots.amount)} for ${escapeHtml(slots.orderLabel)} could not be processed.</p><p><strong>Why this happened:</strong> ${escapeHtml(slots.why)}</p><p><strong>What you can do:</strong> ${escapeHtml(slots.action)}</p><p>Use Pay now to complete the same order.</p>${link}`,
+  }
+}
 
 export interface MessageJobData {
   recoveryJobId: string
   followUpCount?: number
-  toPhone: string
+  toPhone?: string
+  toEmail?: string
   messageBody: string
   paymentLinkId?: string
   paymentLinkUrl?: string
@@ -18,7 +48,8 @@ export interface MessageJobData {
 }
 
 export interface MessageProviderInput {
-  toPhone: string
+  toPhone?: string
+  toEmail?: string
   messageBody: string
   templateName: string
   templateLang: string
@@ -94,6 +125,7 @@ export class WhatsAppCloudProvider implements MessageProvider {
       })
     }
 
+    if (!input.toPhone) throw new Error('customer phone is missing')
     const response = await (this.options.fetchFn ?? fetch)(
       `${(this.options.graphApiUrl ?? config.waGraphApiUrl).replace(/\/+$/, '')}/${phoneNumberId}/messages`,
       {
@@ -128,10 +160,59 @@ export class WhatsAppCloudProvider implements MessageProvider {
   }
 }
 
+export class GmailMessageProvider implements MessageProvider {
+  private readonly transporter: any
+
+  constructor(private readonly options: {
+    host?: string
+    port?: number
+    secure?: boolean
+    user?: string
+    pass?: string
+    from?: string
+    transport?: any
+  } = {}) {
+    if (options.transport) this.transporter = options.transport
+    else {
+      const user = options.user ?? config.smtpUser
+      const pass = options.pass ?? config.smtpPass
+      if (!user || !pass) throw new Error('Gmail SMTP is missing credentials')
+      this.transporter = nodemailer.createTransport({
+        host: options.host ?? config.smtpHost,
+        port: options.port ?? config.smtpPort,
+        secure: options.secure ?? config.smtpSecure,
+        auth: { user, pass },
+      })
+    }
+  }
+
+  async send(input: MessageProviderInput): Promise<{ providerMessageId: string }> {
+    if (!input.toEmail) throw new Error('customer email is missing')
+    const vars = input.templateVars
+    const rendered = renderRecoveryCopy({
+      name: vars['1'] ?? 'there',
+      amount: vars['2'] ?? '',
+      orderLabel: vars['3'] ?? 'your order',
+      why: vars['4'] ?? 'the payment could not be processed',
+      action: vars['5'] ?? 'try again using the payment link',
+      link: input.paymentLinkUrl,
+    })
+    const result = await this.transporter.sendMail({
+      from: this.options.from ?? config.mailFrom ?? this.options.user,
+      to: input.toEmail,
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
+    })
+    return { providerMessageId: String(result.messageId ?? result.response ?? `smtp:${input.toEmail}`) }
+  }
+}
+
 function providerFor(messageId: string): MessageProvider {
-  if (config.waProvider === 'mock') return new MockMessageProvider(messageId)
-  if (config.waProvider === 'whatsapp_cloud') return new WhatsAppCloudProvider()
-  throw new Error(`Unsupported WA_PROVIDER: ${config.waProvider}`)
+  if (config.messageChannel === 'mock') return new MockMessageProvider(messageId)
+  if (config.messageChannel === 'email') return new GmailMessageProvider()
+  if (config.messageChannel === 'whatsapp') return new WhatsAppCloudProvider()
+  throw new Error(`Unsupported MESSAGE_CHANNEL: ${config.messageChannel}`)
 }
 
 export async function processMessage(
@@ -149,14 +230,23 @@ export async function processMessage(
     return { outcome: 'duplicate' as const, recoveryJobId: job.id, messageId }
   }
 
+  const channel = config.messageChannel as MessageChannel
+  if (!['mock', 'email', 'whatsapp'].includes(channel)) throw new Error(`Unsupported MESSAGE_CHANNEL: ${config.messageChannel}`)
+  if (channel === 'email' && !data.toEmail) throw new Error('customer email is missing')
+  if (channel === 'whatsapp' && !data.toPhone) throw new Error('customer phone is missing')
+  if (channel === 'email' && (!data.paymentLinkUrl || data.paymentLinkUrl.includes('example.test'))) {
+    throw new Error('email requires a real payment link')
+  }
+
   const message = existing ?? await prisma.message.create({
     data: {
       id: messageId,
       recoveryJobId: job.id,
-      channel: 'whatsapp',
+      channel,
       toPhone: data.toPhone,
+      toEmail: data.toEmail,
       messageBody: data.messageBody,
-      templateName: config.waTemplateName,
+      templateName: channel === 'whatsapp' ? config.waTemplateName : null,
       status: 'queued',
     },
   })
@@ -165,6 +255,7 @@ export async function processMessage(
     assertSafeContent(data)
     const result = await (provider ?? providerFor(message.id)).send({
       toPhone: data.toPhone,
+      toEmail: data.toEmail,
       messageBody: data.messageBody,
       templateName: config.waTemplateName,
       templateLang: config.waTemplateLang,

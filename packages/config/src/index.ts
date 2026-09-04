@@ -32,4 +32,11 @@ export const config = {
   waTemplateName: process.env.WA_TEMPLATE_NAME ?? 'payment_failed_recover',
   waTemplateLang: process.env.WA_TEMPLATE_LANG ?? 'en_US',
   waGraphApiUrl: process.env.WA_GRAPH_API_URL ?? 'https://graph.facebook.com/v21.0',
+  messageChannel: process.env.MESSAGE_CHANNEL ?? 'mock',
+  smtpHost: process.env.SMTP_HOST ?? 'smtp.gmail.com',
+  smtpPort: Number(process.env.SMTP_PORT ?? 465),
+  smtpSecure: process.env.SMTP_SECURE !== 'false',
+  smtpUser: process.env.SMTP_USER,
+  smtpPass: process.env.SMTP_PASS,
+  mailFrom: process.env.MAIL_FROM,
 }

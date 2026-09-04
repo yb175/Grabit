@@ -639,21 +639,24 @@ export async function processRecoveryJob(
         update: {},
       })
       }
-      if (agent.decision_type === 'one_click' && agent.customer_message && job.failedPayment.customerPhone) {
+      if (agent.decision_type === 'one_click' && agent.customer_message &&
+        (config.messageChannel === 'email' ? job.failedPayment.customerEmail : job.failedPayment.customerPhone)) {
         await getQueue('message').add(
           'send-recovery-message',
           {
             recoveryJobId: job.id,
             followUpCount: job.followUpCount,
-            toPhone: job.failedPayment.customerPhone,
+            toPhone: job.failedPayment.customerPhone ?? undefined,
+            toEmail: job.failedPayment.customerEmail ?? undefined,
             messageBody: agent.customer_message,
             paymentLinkId: paymentLink?.id,
             paymentLinkUrl: paymentLink?.shortUrl,
             templateVars: {
-              1: job.failedPayment.customerName ?? 'Hi',
-              2: job.failedPayment.amount.toString(),
-              3: job.failedPayment.failureReason ?? 'Payment failed',
-              4: paymentLink?.shortUrl ?? `https://example.test/pay/${job.id}`,
+              1: job.failedPayment.customerName ?? 'there',
+              2: `₹${job.failedPayment.amount.toString()}`,
+              3: job.failedPayment.razorpayOrderId ?? 'your order',
+              4: job.failedPayment.failureReason ?? 'the payment could not be processed',
+              5: 'try again using the payment link',
             },
           },
           {

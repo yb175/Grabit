@@ -25,6 +25,11 @@ services:
 
   ai-agent:
     build: ../apps/ai-agent
+    environment:
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3.1-flash-lite-preview}
     ports:
       - "8001:8001"
 
