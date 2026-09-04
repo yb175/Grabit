@@ -12,8 +12,9 @@ import { getQueue } from '@grabit/queue'
 const app = new Hono()
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const VALID_STATUSES: readonly HitlStatus[] = ['pending', 'approved', 'rejected']
 
-// v0 Auth: require x-api-key on all HITL routes.
+// v0 Auth: require x-api-key on all HITL routes (fail closed if unconfigured or mismatch).
 app.use('*', async (c, next) => {
   const apiKey = c.req.header('x-api-key')
   if (!apiKey) {
@@ -21,8 +22,8 @@ app.use('*', async (c, next) => {
   }
 
   const expectedApiKey = process.env.GRABIT_API_KEY || process.env.API_KEY
-  if (expectedApiKey && apiKey !== expectedApiKey) {
-    return c.json({ error: 'unauthorized', message: 'Invalid x-api-key' }, 401)
+  if (!expectedApiKey || apiKey !== expectedApiKey) {
+    return c.json({ error: 'unauthorized', message: 'Invalid or unconfigured API key' }, 401)
   }
 
   await next()
@@ -30,8 +31,15 @@ app.use('*', async (c, next) => {
 
 // GET /hitl — list pending human-review tasks (optional ?status=pending|approved|rejected filter)
 app.get('/', async (c) => {
-  const statusParam = c.req.query('status') as HitlStatus | undefined
-  const status: HitlStatus = statusParam ?? 'pending'
+  const statusParam = c.req.query('status')
+  if (statusParam && !VALID_STATUSES.includes(statusParam as HitlStatus)) {
+    return c.json(
+      { error: 'invalid_status', message: 'status must be pending, approved, or rejected' },
+      400,
+    )
+  }
+
+  const status: HitlStatus = (statusParam as HitlStatus | undefined) ?? 'pending'
 
   const tasks = await prisma.hitlQueue.findMany({
     where: { status },
@@ -123,6 +131,18 @@ app.post('/:id/approve', async (c) => {
     })
   }
 
+  // Reject conflicting transition if task was already rejected
+  if (task.status === 'rejected') {
+    return c.json(
+      {
+        error: 'conflict',
+        message: 'Task has already been rejected and cannot be approved',
+        task,
+      },
+      409,
+    )
+  }
+
   const reviewer =
     c.req.header('x-reviewer') ||
     c.req.header('x-reviewed-by') ||
@@ -198,11 +218,11 @@ app.post('/:id/approve', async (c) => {
   const actionPayload = latestDecision?.actionPayload as Record<string, unknown> | null
   const customerMessage =
     body.messageBody ||
-    (typeof actionPayload?.customer_message === 'string' ? actionPayload.customer_message : '') ||
-    (typeof latestDecision?.explanation === 'string' ? latestDecision.explanation : '')
+    (typeof actionPayload?.customer_message === 'string' ? actionPayload.customer_message : '')
 
   const customerPhone = task.recoveryJob.failedPayment?.customerPhone
 
+  let messageEnqueued = false
   if (customerPhone && customerMessage) {
     try {
       const messageQueue = getQueue('message')
@@ -211,8 +231,9 @@ app.post('/:id/approve', async (c) => {
         toPhone: customerPhone,
         messageBody: customerMessage,
       })
+      messageEnqueued = true
     } catch (queueErr) {
-      console.warn('[hitl] message queue enqueue skipped/failed:', queueErr)
+      console.error('[hitl] message queue enqueue skipped/failed:', queueErr)
     }
   }
 
@@ -220,6 +241,7 @@ app.post('/:id/approve', async (c) => {
     success: true,
     status: 'approved',
     task: updatedTask,
+    messageEnqueued,
   })
 })
 
@@ -255,6 +277,18 @@ app.post('/:id/reject', async (c) => {
       task,
       alreadyProcessed: true,
     })
+  }
+
+  // Reject conflicting transition if task was already approved
+  if (task.status === 'approved') {
+    return c.json(
+      {
+        error: 'conflict',
+        message: 'Task has already been approved and cannot be rejected',
+        task,
+      },
+      409,
+    )
   }
 
   const reviewer =

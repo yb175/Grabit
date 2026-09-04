@@ -3,7 +3,7 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma } from '@grabit/db'
-import { closeAllQueues } from '@grabit/queue'
+import { getQueue, closeAllQueues } from '@grabit/queue'
 import { app } from '../src/app.js'
 
 describe('HITL API (/hitl)', () => {
@@ -11,8 +11,11 @@ describe('HITL API (/hitl)', () => {
   let testPaymentId: string
   let testJobId: string
   let testHitlTaskId: string
+  const originalApiKey = process.env.GRABIT_API_KEY
 
   before(async () => {
+    process.env.GRABIT_API_KEY = 'test-key'
+
     // Seed a failed payment and recovery job that tripped HITL (e.g. high value)
     const payment = await prisma.failedPayment.create({
       data: {
@@ -66,7 +69,14 @@ describe('HITL API (/hitl)', () => {
   })
 
   after(async () => {
-    // Cleanup created records
+    // Restore env var
+    if (originalApiKey === undefined) {
+      delete process.env.GRABIT_API_KEY
+    } else {
+      process.env.GRABIT_API_KEY = originalApiKey
+    }
+
+    // Cleanup created records and test queue jobs
     try {
       if (testJobId) {
         await prisma.auditLog.deleteMany({
@@ -84,6 +94,13 @@ describe('HITL API (/hitl)', () => {
       if (testPaymentId) {
         await prisma.failedPayment.deleteMany({ where: { id: testPaymentId } })
       }
+
+      // Clean enqueued messages in test
+      try {
+        const msgQueue = getQueue('message')
+        await msgQueue.drain()
+      } catch {}
+
       await closeAllQueues()
     } catch (err) {
       console.warn('Cleanup error in HITL test:', err)
@@ -97,23 +114,38 @@ describe('HITL API (/hitl)', () => {
     assert.equal(data.error, 'unauthorized')
   })
 
-  test('v0 Auth: invalid x-api-key returns 401 when GRABIT_API_KEY is configured', async () => {
-    const originalKey = process.env.GRABIT_API_KEY
-    process.env.GRABIT_API_KEY = 'secret-master-key'
+  test('v0 Auth: invalid x-api-key returns 401 when key does not match', async () => {
+    const res = await app.request('/hitl', {
+      headers: { 'x-api-key': 'wrong-key' },
+    })
+    assert.equal(res.status, 401)
+    const data = await res.json() as { error: string }
+    assert.equal(data.error, 'unauthorized')
+  })
+
+  test('v0 Auth: fails closed if API key is not configured in env', async () => {
+    const currentKey = process.env.GRABIT_API_KEY
+    delete process.env.GRABIT_API_KEY
+    delete process.env.API_KEY
     try {
       const res = await app.request('/hitl', {
-        headers: { 'x-api-key': 'wrong-key' },
+        headers: { 'x-api-key': 'some-random-key' },
       })
       assert.equal(res.status, 401)
       const data = await res.json() as { error: string }
       assert.equal(data.error, 'unauthorized')
     } finally {
-      if (originalKey === undefined) {
-        delete process.env.GRABIT_API_KEY
-      } else {
-        process.env.GRABIT_API_KEY = originalKey
-      }
+      process.env.GRABIT_API_KEY = currentKey
     }
+  })
+
+  test('GET /hitl: returns 400 for invalid status filter', async () => {
+    const res = await app.request('/hitl?status=invalid_status', {
+      headers: { 'x-api-key': 'test-key' },
+    })
+    assert.equal(res.status, 400)
+    const data = await res.json() as { error: string }
+    assert.equal(data.error, 'invalid_status')
   })
 
   test('GET /hitl: filters by status query parameter', async () => {
@@ -169,6 +201,11 @@ describe('HITL API (/hitl)', () => {
       body: JSON.stringify({ notes: 'Do not pursue' }),
     })
     assert.equal(res.status, 200)
+
+    // Assert the recovery job status is marked rejected
+    const updatedJob = await prisma.recoveryJob.findUnique({ where: { id: job.id } })
+    assert.equal(updatedJob?.status, 'rejected')
+    assert.equal(updatedJob?.assignedTo, 'ops-manager')
 
     // Verify messages table has NO messages for this job
     const messages = await prisma.message.findMany({
@@ -288,6 +325,17 @@ describe('HITL API (/hitl)', () => {
     assert.equal(data.alreadyProcessed, true)
   })
 
+  test('Conflicting transitions return 409 Conflict', async () => {
+    // Attempting to reject the already-approved task should return 409
+    const rejectRes = await app.request(`/hitl/${testHitlTaskId}/reject`, {
+      method: 'POST',
+      headers: { 'x-api-key': 'test-key' },
+    })
+    assert.equal(rejectRes.status, 409)
+    const rejectData = await rejectRes.json() as { error: string }
+    assert.equal(rejectData.error, 'conflict')
+  })
+
   test('POST /hitl/:id/reject: rejects task, marks job status=rejected, and writes audit log', async () => {
     // Create a new task to test reject flow
     const rejectPayment = await prisma.failedPayment.create({
@@ -361,6 +409,13 @@ describe('HITL API (/hitl)', () => {
     assert.equal(doubleRes.status, 200)
     const doubleData = await doubleRes.json() as { alreadyProcessed: boolean }
     assert.equal(doubleData.alreadyProcessed, true)
+
+    // Attempting to approve the rejected task should return 409
+    const conflictApproveRes = await app.request(`/hitl/${rejectTask.id}/approve`, {
+      method: 'POST',
+      headers: { 'x-api-key': 'test-key' },
+    })
+    assert.equal(conflictApproveRes.status, 409)
 
     // Cleanup reject test data
     await prisma.auditLog.deleteMany({
