@@ -45,21 +45,25 @@ test('fetchRazorpayPaymentStatus returns unknown if keys or payment ID missing',
   assert.equal(res2, 'unknown')
 })
 
-test('fetchRazorpayPaymentStatus returns paid on 200 with captured status', async () => {
-  const mockFetch: typeof fetch = async () =>
-    new Response(JSON.stringify({ id: 'pay_123', status: 'captured', amount: 5000 }), {
+test('fetchRazorpayPaymentStatus handles baseUrl with trailing slashes correctly', async () => {
+  let requestedUrl = ''
+  const mockFetch: typeof fetch = async (url) => {
+    requestedUrl = url.toString()
+    return new Response(JSON.stringify({ id: 'pay_123', status: 'captured' }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     })
+  }
 
   const res = await fetchRazorpayPaymentStatus('pay_123', {
     keyId: 'rzp_test_key',
     keySecret: 'rzp_test_secret',
-    baseUrl: 'https://api.razorpay.test',
+    baseUrl: 'https://api.razorpay.test///',
     fetchFn: mockFetch,
   })
 
   assert.equal(res, 'paid')
+  assert.equal(requestedUrl, 'https://api.razorpay.test/v1/payments/pay_123')
 })
 
 test('fetchRazorpayPaymentStatus returns unknown on HTTP error', async () => {

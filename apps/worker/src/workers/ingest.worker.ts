@@ -63,7 +63,7 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
       where: { razorpayPaymentId },
       include: {
         recoveryJobs: {
-          where: { status: { in: ['pending', 'processing', 'waiting', 'hitl'] } },
+          where: { status: { not: 'recovered' } },
           orderBy: { createdAt: 'desc' },
         },
       },
@@ -79,13 +79,18 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
       return { outcome: 'duplicate', failedPaymentId: existing.id, recoveryJobId: null, failureType: null }
     }
 
-    await prisma.failedPayment.update({
-      where: { id: existing.id },
+    const updated = await prisma.failedPayment.updateMany({
+      where: { id: existing.id, isPaid: false },
       data: {
         isPaid: true,
         paidAt: new Date(data.receivedAt || Date.now()),
       },
     })
+
+    if (updated.count === 0) {
+      console.log(`[ingest] duplicate ${event} for already-paid ${razorpayPaymentId} — skipping`)
+      return { outcome: 'duplicate', failedPaymentId: existing.id, recoveryJobId: null, failureType: null }
+    }
 
     console.log(`[ingest] ${event} marked payment ${existing.id} (${razorpayPaymentId}) as paid`)
     return {

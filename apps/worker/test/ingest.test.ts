@@ -208,3 +208,65 @@ test('payment.captured for unknown payment is safely ignored', async () => {
   assert.equal(result.failedPaymentId, null)
   assert.equal(result.recoveryJobId, null)
 })
+
+test('payment.captured reconciles terminal job (unrecovered/stale/rejected)', async () => {
+  const id = uniqId()
+  const failResult = await processIngestEvent({
+    event: 'payment.failed',
+    payload: paymentFailedEvent(id).payload,
+    receivedAt: new Date().toISOString(),
+  })
+  assert.equal(failResult.outcome, 'created')
+
+  // Put job in terminal unrecovered state
+  await prisma.recoveryJob.update({
+    where: { id: failResult.recoveryJobId! },
+    data: { status: 'unrecovered' },
+  })
+
+  const capResult = await processIngestEvent({
+    event: 'payment.captured',
+    payload: {
+      payment: {
+        entity: { id, amount: 100000, status: 'captured' },
+      },
+    },
+    receivedAt: new Date().toISOString(),
+  })
+
+  assert.equal(capResult.outcome, 'updated')
+  assert.equal(capResult.recoveryJobId, failResult.recoveryJobId)
+
+  const fp = await prisma.failedPayment.findUniqueOrThrow({
+    where: { razorpayPaymentId: id },
+  })
+  assert.equal(fp.isPaid, true)
+})
+
+test('concurrent duplicate payment.captured webhooks are handled atomically', async () => {
+  const id = uniqId()
+  await processIngestEvent({
+    event: 'payment.failed',
+    payload: paymentFailedEvent(id).payload,
+    receivedAt: new Date().toISOString(),
+  })
+
+  const capData = {
+    event: 'payment.captured',
+    payload: {
+      payment: {
+        entity: { id, amount: 100000, status: 'captured' },
+      },
+    },
+    receivedAt: new Date().toISOString(),
+  }
+
+  // Run two concurrent capture ingest events
+  const [res1, res2] = await Promise.all([
+    processIngestEvent(capData),
+    processIngestEvent(capData),
+  ])
+
+  const outcomes = [res1.outcome, res2.outcome].sort()
+  assert.deepEqual(outcomes, ['duplicate', 'updated'])
+})

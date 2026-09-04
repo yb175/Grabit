@@ -122,7 +122,14 @@ export async function processRecoveryJob(
 
   // Resolve latest payment status if not already known to be paid
   if (!job.failedPayment.isPaid) {
-    const statusResolver = data.paymentStatusResolver ?? fetchRazorpayPaymentStatus
+    const statusResolver =
+      data.paymentStatusResolver ??
+      ((id: string) =>
+        fetchRazorpayPaymentStatus(id, {
+          keyId: config.razorpayKeyId,
+          keySecret: config.razorpayKeySecret,
+          baseUrl: config.razorpayApiUrl,
+        }))
     try {
       const status = await statusResolver(job.failedPayment.razorpayPaymentId)
       if (status === 'paid') {

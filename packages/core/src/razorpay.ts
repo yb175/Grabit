@@ -89,7 +89,8 @@ export async function fetchRazorpayPaymentStatus(
 ): Promise<ResolvedPaymentStatus> {
   const keyId = options?.keyId ?? process.env.RAZORPAY_KEY_ID
   const keySecret = options?.keySecret ?? process.env.RAZORPAY_KEY_SECRET
-  const baseUrl = options?.baseUrl ?? process.env.RAZORPAY_API_URL ?? 'https://api.razorpay.com'
+  const rawBaseUrl = options?.baseUrl ?? process.env.RAZORPAY_API_URL ?? 'https://api.razorpay.com'
+  const baseUrl = rawBaseUrl.replace(/\/+$/, '')
   const timeoutMs = options?.timeoutMs ?? 5000
   const fetchFn = options?.fetchFn ?? globalThis.fetch
 
