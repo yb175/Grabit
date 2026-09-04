@@ -1,9 +1,6 @@
-try {
-  if (typeof process.loadEnvFile === 'function') {
-    process.loadEnvFile()
-  }
-} catch {}
-
+// Env is loaded by the `demo:batch` npm script via `--env-file-if-exists=.env`
+// (before ESM static imports run). This entrypoint only wires teardown +
+// exit codes so piped stdout (the scoreboard table) always flushes.
 import { prisma } from '@grabit/db'
 import { closeAllQueues } from '@grabit/queue'
 import { runBatch } from './demo-batch/index.js'
@@ -16,13 +13,14 @@ runBatch({ useLiveClock: isLive })
     await prisma.$disconnect()
     if (!summary.passedQAChecks) {
       console.error('QA checks failed')
-      process.exit(1)
+      process.exitCode = 1
+      return
     }
-    process.exit(0)
+    process.exitCode = 0
   })
   .catch(async (err) => {
     console.error('Batch runner failed:', err)
     await closeAllQueues()
     await prisma.$disconnect()
-    process.exit(1)
+    process.exitCode = 1
   })

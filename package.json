@@ -2,7 +2,7 @@
   "name": "grabit",
   "private": true,
   "scripts": {
-    "demo:batch": "tsx scripts/demo-batch/index.ts",
+    "demo:batch": "node --env-file-if-exists=.env --import tsx scripts/demo-batch.ts",
     "dev:api": "pnpm --filter @grabit/api dev",
     "dev:worker": "pnpm --filter @grabit/worker dev",
     "test": "node --env-file-if-exists=.env --import tsx --test tests/*.test.ts"

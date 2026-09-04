@@ -283,7 +283,22 @@ export async function runBatch(options: RunBatchOptions = {}): Promise<BatchRunS
 
   const duplicateHandledCleanly = duplicateCount >= 1
 
-  const passedQAChecks = hardCasesNeverOneClick && duplicateHandledCleanly
+  const highValueCases = results.filter(
+    (r) => r.amount >= 10000 && r.outcome === 'created',
+  )
+  const highValueEscalates =
+    highValueCases.length > 0 &&
+    highValueCases.every((r) => r.ruleAction === 'hitl')
+
+  const quietHoursCases = results.filter(
+    (r) => r.caseName.includes('quiet_hours') || r.caseName.includes('night_delay'),
+  )
+  const quietHoursDelayed =
+    quietHoursCases.length > 0 &&
+    quietHoursCases.every((r) => r.ruleAction === 'delay')
+
+  const passedQAChecks =
+    hardCasesNeverOneClick && duplicateHandledCleanly && highValueEscalates && quietHoursDelayed
 
   const summary: BatchRunSummary = {
     totalCases,

@@ -142,6 +142,7 @@ export const HARD_DECLINE_CODES = new Set([
   'fraudulent',
   'invalid_vpa',
   'authorization_denied',
+  'stolen_card',
 ])
 
 /// Rule-based initial classification. The recovery phase (AI agent) may
