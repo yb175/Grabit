@@ -26,4 +26,10 @@ export const config = {
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
   razorpayApiUrl: process.env.RAZORPAY_API_URL ?? 'https://api.razorpay.com',
   razorpayPaymentLinkEnabled: process.env.RAZORPAY_PAYMENT_LINK_ENABLED === 'true',
+  waProvider: process.env.WA_PROVIDER ?? 'mock',
+  waPhoneNumberId: process.env.WA_PHONE_NUMBER_ID,
+  waAccessToken: process.env.WA_ACCESS_TOKEN,
+  waTemplateName: process.env.WA_TEMPLATE_NAME ?? 'payment_failed_recover',
+  waTemplateLang: process.env.WA_TEMPLATE_LANG ?? 'en_US',
+  waGraphApiUrl: process.env.WA_GRAPH_API_URL ?? 'https://graph.facebook.com/v21.0',
 }

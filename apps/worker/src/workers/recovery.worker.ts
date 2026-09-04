@@ -644,6 +644,7 @@ export async function processRecoveryJob(
           'send-recovery-message',
           {
             recoveryJobId: job.id,
+            followUpCount: job.followUpCount,
             toPhone: job.failedPayment.customerPhone,
             messageBody: agent.customer_message,
             paymentLinkId: paymentLink?.id,
