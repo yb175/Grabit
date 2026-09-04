@@ -780,6 +780,26 @@ test('e2e: hard failure never reaches the message worker and keeps count 0', asy
   assert.equal(await prisma.message.count({ where: { recoveryJobId: job.id } }), 0)
 })
 
+test('e2e: already-stale job at max count closes unrecovered once, ledger written', async () => {
+  const { job } = await seedJob({ amount: 1200, failureType: 'soft', followUpCount: 2, maxFollowUps: 2, status: 'stale' })
+
+  const r1 = await processRecoveryJob({ recoveryJobId: job.id }, new Date('2026-01-02T11:00:00Z'))
+  assert.equal(r1.decision?.action, 'stop_unrecovered')
+  assert.equal(r1.decision?.rule, 'max_followups_exceeded')
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.status, 'unrecovered')
+
+  const ledger = await prisma.recoveryLedger.findMany({ where: { recoveryJobId: job.id } })
+  assert.equal(ledger.length, 1)
+  assert.equal(ledger[0].status, 'unrecovered')
+  assert.equal(ledger[0].amount.toString(), '1200')
+
+  // Duplicate tick stays idempotent.
+  await processRecoveryJob({ recoveryJobId: job.id }, new Date('2026-01-02T12:00:00Z'))
+  assert.equal(await prisma.recoveryLedger.count({ where: { recoveryJobId: job.id } }), 1)
+})
+
 test('recovery: buildAgentPayload strips customer PII (phone, email, full name)', () => {
   const mockJob = {
     id: '00000000-0000-0000-0000-000000000001',

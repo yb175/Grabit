@@ -258,7 +258,11 @@ export async function processMessage(
   const messageId = stableUuid(`message:${job.id}:${attempt}`)
   const existing = await prisma.message.findUnique({ where: { id: messageId } })
   if (existing?.status === 'sent' || existing?.status === 'delivered' || existing?.status === 'read') {
-    const countWasBumped = existing.status === 'sent' && job.followUpCount === attempt
+    // Accepted message = sent count. A crash between markSent and bumpJob can
+    // leave the count at `attempt` while the row is sent/delivered/read (a
+    // delivery webhook may flip the status before the retry) — reconcile
+    // regardless of which accepted status it reached.
+    const countWasBumped = job.followUpCount === attempt
     // The provider already accepted this message. Repair any partially
     // reconciled state (e.g. follow-up bump lost in a previous crash) before
     // returning, so the pipeline never stalls or re-sends.
@@ -282,7 +286,7 @@ export async function processMessage(
             entityId: existing.id,
             action: 'message_sent',
             oldValue: { status: 'queued' },
-            newValue: { status: 'sent', providerMessageId: existing.providerMessageId },
+            newValue: { status: existing.status, providerMessageId: existing.providerMessageId },
             performedBy: 'message_worker',
           },
           update: {},
@@ -301,7 +305,16 @@ export async function processMessage(
       const gapHours = tickCount === 1
         ? DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours
         : DEFAULT_STOPPING_RULES_CONFIG.followUp2GapHours
-      await scheduleFollowUpTick(job.id, tickCount, gapHours * 60 * 60 * 1000)
+      const fullGapMs = gapHours * 60 * 60 * 1000
+      // When the bump already committed (replay self-heal) the wait window is
+      // persisted in next_attempt_at — fire at that deadline, clamped to zero,
+      // instead of re-applying a fresh gap from the replay time. A reconcile
+      // that just wrote the bump sets next_attempt_at = now + gap, so the full
+      // gap is correct there.
+      const delayMs = countWasBumped || !job.nextAttemptAt
+        ? fullGapMs
+        : Math.max(job.nextAttemptAt.getTime() - now.getTime(), 0)
+      await scheduleFollowUpTick(job.id, tickCount, delayMs)
     }
     return { outcome: 'duplicate' as const, recoveryJobId: job.id, messageId }
   }

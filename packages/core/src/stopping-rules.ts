@@ -295,25 +295,26 @@ export function evaluateStoppingRules(input: StoppingRulesInput): StoppingRuleDe
     }
   }
 
-  // 3. Already Stale Status
-  if (job.status === 'stale') {
-    return {
-      action: 'stale',
-      rule: 'stale_status',
-      reason: 'Job is already marked stale.',
-      shouldCallAi: false,
-    }
-  }
-
-  // 4. Rule 2: Max Follow-ups Exceeded
-  // Evaluated BEFORE staleness: once the follow-up budget is exhausted nothing
-  // more can be sent, so the case MUST close as unrecovered (ledger row) even
-  // if the wait-window tick lands at/after the 24h inactivity threshold.
+  // 3. Rule 2: Max Follow-ups Exceeded
+  // Evaluated before BOTH stale checks: once the follow-up budget is exhausted
+  // nothing more can be sent, so the case MUST close as unrecovered (ledger
+  // row) even if the wait-window tick lands at/after the 24h inactivity
+  // threshold or the job was already marked stale.
   if (followUpCount >= maxFollowUps) {
     return {
       action: 'stop_unrecovered',
       rule: 'max_followups_exceeded',
       reason: `Maximum follow-up attempts (${maxFollowUps}) reached without payment recovery.`,
+      shouldCallAi: false,
+    }
+  }
+
+  // 4. Already Stale Status
+  if (job.status === 'stale') {
+    return {
+      action: 'stale',
+      rule: 'stale_status',
+      reason: 'Job is already marked stale.',
       shouldCallAi: false,
     }
   }

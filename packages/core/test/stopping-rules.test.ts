@@ -106,6 +106,29 @@ test('Rule 2 before Rule 7: exhausted follow-ups close unrecovered even past 24h
   assert.match(decision.reason, /Maximum follow-up attempts \(2\) reached/)
 })
 
+test('Rule 2 before stale_status: already-stale job at the cap closes as unrecovered', () => {
+  const { job, payment, now } = createBaseFixture()
+  job.status = 'stale'
+  job.followUpCount = 2
+  job.maxFollowUps = 2
+
+  const decision = evaluateStoppingRules({ job, payment, now })
+  assert.equal(decision.action, 'stop_unrecovered')
+  assert.equal(decision.rule, 'max_followups_exceeded')
+  assert.equal(decision.shouldCallAi, false)
+})
+
+test('Rule 2 before stale_status: already-stale job below the cap stays stale', () => {
+  const { job, payment, now } = createBaseFixture()
+  job.status = 'stale'
+  job.followUpCount = 1
+
+  const decision = evaluateStoppingRules({ job, payment, now })
+  assert.equal(decision.action, 'stale')
+  assert.equal(decision.rule, 'stale_status')
+  assert.equal(decision.shouldCallAi, false)
+})
+
 // ---------------------------------------------------------------------------
 // 3. Quiet Hours (21:00 to 08:00 IST)
 // ---------------------------------------------------------------------------

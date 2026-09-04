@@ -168,6 +168,67 @@ test('message: already-paid payment sends but schedules no follow-up tick', asyn
   assert.equal(await getQueue('recovery').getJob(stableUuid(`recovery:${job.id}:fu1`)), undefined)
 })
 
+test('message: delivered/read accepted message still reconciles the bump and tick (crash window)', async () => {
+  const { job } = await seedJobFull()
+  // Crash window: markSent committed, bumpJob crashed; the delivery webhook
+  // flipped the row to delivered before the BullMQ retry replayed the job.
+  await prisma.message.create({
+    data: {
+      id: stableUuid(`message:${job.id}:0`),
+      recoveryJobId: job.id,
+      toPhone: '+918810566953',
+      messageBody: 'Pay here: https://example.test/pay/demo',
+      status: 'delivered',
+      providerMessageId: 'wamid.reconciled',
+      sentAt: new Date('2026-01-01T10:00:00Z'),
+    },
+  })
+
+  const replay = await processMessage(messageData(job.id), new Date('2026-01-01T10:05:00Z'), new MockMessageProvider('reconciled-delivered'))
+  assert.equal(replay.outcome, 'duplicate')
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.followUpCount, 1, 'an accepted message must still advance the count')
+
+  const tick = await getQueue('recovery').getJob(stableUuid(`recovery:${job.id}:fu1`))
+  assert.ok(tick, 'an accepted message must still schedule the follow-up tick')
+  await tick.remove()
+})
+
+test('message: replay self-heal fires the tick at the persisted wait deadline, not a fresh gap', async () => {
+  const { job } = await seedJobFull()
+  // Send committed (count bumped + next_attempt_at persisted) but the delayed
+  // enqueue was lost — replay must fire at that deadline, not re-apply a gap.
+  await prisma.recoveryJob.update({
+    where: { id: job.id },
+    data: { followUpCount: 1, nextAttemptAt: new Date('2026-01-01T12:00:00Z') },
+  })
+  await prisma.message.create({
+    data: {
+      id: stableUuid(`message:${job.id}:0`),
+      recoveryJobId: job.id,
+      toPhone: '+918810566953',
+      messageBody: 'Pay here: https://example.test/pay/demo',
+      status: 'sent',
+      providerMessageId: 'wamid.lost-enqueue',
+      sentAt: new Date('2026-01-01T08:00:00Z'),
+    },
+  })
+
+  // Replay 1h before the persisted deadline: the repaired tick must fire at
+  // the deadline (1h remainder), not a fresh 4h gap after the replay.
+  const replay = await processMessage(messageData(job.id), new Date('2026-01-01T11:00:00Z'), new MockMessageProvider('lost-enqueue'))
+  assert.equal(replay.outcome, 'duplicate')
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.followUpCount, 1, 'replay must not re-bump the count')
+
+  const tick = await getQueue('recovery').getJob(stableUuid(`recovery:${job.id}:fu1`))
+  assert.ok(tick, 'replay must restore the lost follow-up tick')
+  assert.equal(Number(tick.delay), 60 * 60 * 1000, 'tick must fire at the persisted next_attempt_at')
+  await tick.remove()
+})
+
 test('message: unexpected URL fails closed without incrementing follow-up count', async () => {
   const job = await seedJob()
   await assert.rejects(
