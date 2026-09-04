@@ -165,10 +165,32 @@ test('payment-link: handles Razorpay API errors cleanly without leaking secret',
       })
     },
     (err: Error) => {
-      assert.match(err.message, /Razorpay Payment Link API failed/)
-      assert.match(err.message, /BAD_REQUEST_ERROR: Payment link already issued/)
+      // Duplicate reference_id is detected and surfaced distinctly so the
+      // worker never replaces a real link with a mock URL; secret still never leaks.
+      assert.match(err.message, /duplicate reference_id/)
       assert.doesNotMatch(err.message, /super_secret_never_leak/)
       return true
     },
   )
+})
+
+test('payment-link: live (rzp_live_) key with enabled=true is rejected — test-mode only', async () => {
+  const service = new PaymentLinkService({
+    enabled: true,
+    keyId: 'rzp_live_abc123',
+    keySecret: 'secret_key',
+  })
+
+  await assert.rejects(
+    service.create({ referenceId: 'job_live_1', amount: 500 }),
+    /test-mode only; RAZORPAY_KEY_ID must start with rzp_test_/,
+  )
+})
+
+test('payment-link: invalid amount is rejected before a mock link is returned', async () => {
+  const service = new PaymentLinkService({ enabled: false })
+
+  await assert.rejects(service.create({ referenceId: 'job_zero', amount: 0 }), /Invalid amount/)
+  await assert.rejects(service.create({ referenceId: 'job_neg', amount: -100 }), /Invalid amount/)
+  await assert.rejects(service.create({ referenceId: 'job_invalid', amount: 'not-a-number' }), /Invalid amount/)
 })

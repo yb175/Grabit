@@ -561,43 +561,33 @@ export async function processRecoveryJob(
         if (job.paymentLinkId && job.paymentLinkUrl) {
           paymentLink = { id: job.paymentLinkId, shortUrl: job.paymentLinkUrl }
         } else {
-          try {
-            const link = await linkService.create({
-              amount: job.failedPayment.amount,
-              currency: job.failedPayment.currency ?? 'INR',
-              referenceId: job.id,
-              description: job.failedPayment.failureReason ?? 'Payment recovery',
-              customer: {
-                name: job.failedPayment.customerName,
-                contact: job.failedPayment.customerPhone,
-                email: job.failedPayment.customerEmail,
-              },
-              notes: {
-                recovery_job_id: job.id,
-                failed_payment_id: job.failedPayment.id,
-              },
-            })
-            paymentLink = { id: link.id, shortUrl: link.shortUrl }
-            await prisma.recoveryJob.update({
-              where: { id: job.id },
-              data: {
-                paymentLinkId: link.id,
-                paymentLinkUrl: link.shortUrl,
-              },
-            })
-          } catch (err) {
-            console.error(`[recovery] failed to create payment link for job ${job.id}:`, err instanceof Error ? err.message : err)
-            const fallbackUrl = `https://example.test/pay/${job.id}`
-            const fallbackId = `plink_mock_${job.id}`
-            paymentLink = { id: fallbackId, shortUrl: fallbackUrl }
-            await prisma.recoveryJob.update({
-              where: { id: job.id },
-              data: {
-                paymentLinkId: fallbackId,
-                paymentLinkUrl: fallbackUrl,
-              },
-            })
-          }
+          // Mock links come from PaymentLinkService itself when Razorpay is
+          // disabled/unconfigured. Any real API or persistence failure here
+          // propagates so the recovery job is retried — never replaced with a
+          // non-checkout example.test URL sent to a customer.
+          const link = await linkService.create({
+            amount: job.failedPayment.amount,
+            currency: job.failedPayment.currency ?? 'INR',
+            referenceId: job.id,
+            description: job.failedPayment.failureReason ?? 'Payment recovery',
+            customer: {
+              name: job.failedPayment.customerName,
+              contact: job.failedPayment.customerPhone,
+              email: job.failedPayment.customerEmail,
+            },
+            notes: {
+              recovery_job_id: job.id,
+              failed_payment_id: job.failedPayment.id,
+            },
+          })
+          paymentLink = { id: link.id, shortUrl: link.shortUrl }
+          await prisma.recoveryJob.update({
+            where: { id: job.id },
+            data: {
+              paymentLinkId: link.id,
+              paymentLinkUrl: link.shortUrl,
+            },
+          })
         }
       }
 
