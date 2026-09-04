@@ -2,7 +2,8 @@ import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma, Prisma } from '@grabit/db'
 import { config } from '@grabit/config'
-import { closeAllQueues } from '@grabit/queue'
+import { closeAllQueues, getQueue } from '@grabit/queue'
+import { DEFAULT_STOPPING_RULES_CONFIG } from '@grabit/core'
 import {
   GmailMessageProvider,
   MockMessageProvider,
@@ -48,6 +49,26 @@ async function seedJob() {
   return job
 }
 
+async function seedJobFull(opts: { isPaid?: boolean } = {}) {
+  const payment = await prisma.failedPayment.create({
+    data: {
+      razorpayPaymentId: uniquePaymentId(),
+      amount: new Prisma.Decimal(1500),
+      currency: 'INR',
+      isPaid: opts.isPaid ?? false,
+      failureReason: 'Insufficient funds',
+      failureSource: 'payment',
+      customerPhone: '+918810566953',
+      customerName: 'Yug',
+      rawPayload: {},
+    },
+  })
+  const job = await prisma.recoveryJob.create({
+    data: { failedPaymentId: payment.id, failureType: 'soft', status: 'processing' },
+  })
+  return { payment, job }
+}
+
 const messageData = (recoveryJobId: string, body = 'Pay here: https://example.test/pay/demo') => ({
   recoveryJobId,
   followUpCount: 0,
@@ -81,6 +102,70 @@ test('message: mock provider persists one sent message and increments once', asy
   const replay = await processMessage(messageData(job.id), new Date(), provider)
   assert.equal(replay.outcome, 'duplicate')
   assert.equal(calls, 1)
+})
+
+test('message: successful send bumps count and schedules the delayed recovery tick', async () => {
+  const { job } = await seedJobFull()
+  const now = new Date('2026-01-01T10:00:00Z')
+  const result = await processMessage(messageData(job.id), now, new MockMessageProvider('fu-bump'))
+  assert.equal(result.outcome, 'sent')
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.followUpCount, 1)
+  assert.equal(
+    updated.nextAttemptAt?.getTime(),
+    now.getTime() + DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours * 3600_000,
+    'next_attempt_at must advance by the follow-up wait window',
+  )
+
+  const tickId = stableUuid(`recovery:${job.id}:fu1`)
+  const tick = await getQueue('recovery').getJob(tickId)
+  assert.ok(tick, 'successful send must enqueue the delayed recovery tick')
+  assert.equal(tick.data.recoveryJobId, job.id)
+  assert.equal(Number(tick.delay), DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours * 3600_000)
+  await tick.remove()
+})
+
+test('message: replay of a sent job keeps the count and does not duplicate the tick', async () => {
+  const { job } = await seedJobFull()
+  await processMessage(messageData(job.id), new Date('2026-01-01T10:00:00Z'), new MockMessageProvider('fu-replay'))
+  const tickId = stableUuid(`recovery:${job.id}:fu1`)
+
+  const replay = await processMessage(messageData(job.id), new Date('2026-01-01T11:00:00Z'), new MockMessageProvider('fu-replay'))
+  assert.equal(replay.outcome, 'duplicate')
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.followUpCount, 1, 'replay must not advance the count again')
+
+  const tick = await getQueue('recovery').getJob(tickId)
+  assert.ok(tick, 'replay must keep the follow-up tick')
+  assert.equal(Number(tick.delay), DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours * 3600_000)
+  await tick.remove()
+})
+
+test('message: failed send keeps count unchanged and schedules no follow-up tick', async () => {
+  const { job } = await seedJobFull()
+  const provider: MessageProvider = {
+    async send() {
+      throw new Error('provider down')
+    },
+  }
+  await assert.rejects(processMessage(messageData(job.id), new Date(), provider), /provider down/)
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.followUpCount, 0)
+  assert.equal(await getQueue('recovery').getJob(stableUuid(`recovery:${job.id}:fu1`)), undefined)
+  const message = await prisma.message.findFirstOrThrow({ where: { recoveryJobId: job.id } })
+  assert.equal(message.status, 'failed')
+})
+
+test('message: already-paid payment sends but schedules no follow-up tick', async () => {
+  const { job } = await seedJobFull({ isPaid: true })
+  const result = await processMessage(messageData(job.id), new Date(), new MockMessageProvider('fu-paid'))
+  assert.equal(result.outcome, 'sent')
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.followUpCount, 1)
+  assert.equal(await getQueue('recovery').getJob(stableUuid(`recovery:${job.id}:fu1`)), undefined)
 })
 
 test('message: unexpected URL fails closed without incrementing follow-up count', async () => {
