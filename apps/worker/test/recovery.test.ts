@@ -10,7 +10,7 @@ import { prisma, Prisma } from '@grabit/db'
 import { config } from '@grabit/config'
 import { fromISTComponents, toISTComponents } from '@grabit/core'
 import { getQueue, closeAllQueues } from '@grabit/queue'
-import { processRecoveryJob, stableUuid } from '../src/workers/recovery.worker.js'
+import { processRecoveryJob, stableUuid, buildAgentPayload } from '../src/workers/recovery.worker.js'
 
 const paymentIds: string[] = []
 const uniqPaymentId = () => {
@@ -486,4 +486,57 @@ test('queue: two enqueue attempts with same deterministic jobId creates only one
   assert.equal(fetched.data.attempt, 1)
 
   await fetched.remove()
+})
+
+test('recovery: buildAgentPayload strips customer PII (phone, email, full name)', () => {
+  const mockJob = {
+    id: '00000000-0000-0000-0000-000000000001',
+    followUpCount: 1,
+    maxFollowUps: 2,
+    status: 'pending',
+    failedPayment: {
+      razorpayPaymentId: 'pay_test_pii_123',
+      amount: new Prisma.Decimal(1499),
+      currency: 'INR',
+      failureCode: 'insufficient_funds',
+      failureReason: 'Account has insufficient funds',
+      failureSource: 'payment',
+      paymentMethod: 'upi',
+      customerName: 'Aarav Sharma',
+      customerPhone: '+919999999999',
+      customerEmail: 'aarav.sharma@example.com',
+      contact: '+919876543210',
+      email: 'customer@test.com',
+      notes: { customer_name: 'Aarav Sharma' },
+    },
+  }
+
+  const payload = buildAgentPayload(mockJob)
+
+  // Verify exact schema shape
+  assert.deepEqual(payload, {
+    job_id: '00000000-0000-0000-0000-000000000001',
+    failed_payment: {
+      razorpay_payment_id: 'pay_test_pii_123',
+      amount: 1499,
+      currency: 'INR',
+      failure_code: 'insufficient_funds',
+      failure_reason: 'Account has insufficient funds',
+      failure_source: 'payment',
+      payment_method: 'upi',
+    },
+    job: {
+      follow_up_count: 1,
+      max_follow_ups: 2,
+      status: 'pending',
+    },
+  })
+
+  // Verify that no PII strings leak into serialized JSON
+  const serialized = JSON.stringify(payload)
+  assert.equal(serialized.includes('+91'), false, 'Serialized payload should not contain phone country code +91')
+  assert.equal(serialized.includes('@'), false, 'Serialized payload should not contain email symbol @')
+  assert.equal(serialized.includes('Aarav'), false, 'Serialized payload should not contain customer name')
+  assert.equal(serialized.includes('customer_name'), false, 'Serialized payload should not have customer_name key')
+  assert.equal(serialized.includes('customer_phone'), false, 'Serialized payload should not have customer_phone key')
 })

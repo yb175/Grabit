@@ -36,23 +36,68 @@ interface AgentResponse {
   tools_used: string[]
 }
 
+export interface AgentDecidePayload {
+  job_id: string
+  failed_payment: {
+    razorpay_payment_id: string
+    amount: number
+    currency: string
+    failure_code: string | null
+    failure_reason: string | null
+    failure_source: string | null
+    payment_method: string
+  }
+  job: {
+    follow_up_count: number
+    max_follow_ups: number
+    status: string
+  }
+}
+
+export function buildAgentPayload(job: {
+  id: string
+  followUpCount: number
+  maxFollowUps: number
+  status: string
+  failedPayment: {
+    razorpayPaymentId: string
+    amount: number | { toString(): string }
+    currency: string
+    failureCode?: string | null
+    failureReason?: string | null
+    failureSource?: string | null
+    paymentMethod?: string | null
+    [key: string]: any
+  }
+}): AgentDecidePayload {
+  return {
+    job_id: job.id,
+    failed_payment: {
+      razorpay_payment_id: job.failedPayment.razorpayPaymentId,
+      amount: Number(job.failedPayment.amount),
+      currency: job.failedPayment.currency,
+      failure_code: job.failedPayment.failureCode ?? null,
+      failure_reason: job.failedPayment.failureReason ?? null,
+      failure_source: job.failedPayment.failureSource ?? null,
+      payment_method: job.failedPayment.paymentMethod ?? 'upi',
+    },
+    job: {
+      follow_up_count: job.followUpCount,
+      max_follow_ups: job.maxFollowUps,
+      status: job.status,
+    },
+  }
+}
+
 async function callAgent(job: any): Promise<AgentResponse> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 10_000)
   try {
     const response = await fetch(`${config.aiAgentUrl}/v1/decide`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, signal: controller.signal,
-      body: JSON.stringify({
-        job_id: job.id,
-        failed_payment: {
-          razorpay_payment_id: job.failedPayment.razorpayPaymentId,
-          amount: Number(job.failedPayment.amount), currency: job.failedPayment.currency,
-          failure_code: job.failedPayment.failureCode, failure_reason: job.failedPayment.failureReason,
-          failure_source: job.failedPayment.failureSource, payment_method: job.failedPayment.paymentMethod ?? 'upi',
-          customer_name: job.failedPayment.customerName, customer_phone: job.failedPayment.customerPhone,
-        },
-        job: { follow_up_count: job.followUpCount, max_follow_ups: job.maxFollowUps, status: job.status },
-      }),
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify(buildAgentPayload(job)),
     })
     if (!response.ok) throw new Error(`agent HTTP ${response.status}`)
     const result = await response.json() as AgentResponse
