@@ -108,6 +108,9 @@ model FailedPayment {
   /// Amount in RUPEES (Razorpay sends paise — convert at ingestion).
   amount            Decimal  @db.Decimal(14, 2)
   currency          String   @default("INR")
+  /// Whether this payment has been completed / captured.
+  isPaid            Boolean  @default(false) @map("is_paid")
+  paidAt            DateTime? @map("paid_at") @db.Timestamptz(3)
   /// Machine-readable decline code (e.g. "insufficient_funds").
   failureCode       String?  @map("failure_code")
   /// Human-readable reason as reported by the gateway/bank.

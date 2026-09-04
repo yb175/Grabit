@@ -18,15 +18,14 @@ Scope: webhook/ingest, stopping rules, and AI-agent contract only. Messaging and
 Implemented:
 
 - Hono Razorpay webhook route with raw-body HMAC verification, event allowlist, malformed-JSON handling, and BullMQ ingest enqueue.
-- IngestWorker normalization, rupees conversion, DB persistence, duplicate payment-id handling, and recovery enqueue.
+- IngestWorker normalization, rupees conversion, DB persistence, duplicate payment-id handling, payment capture/success idempotent status updates, and recovery enqueue.
 - Deterministic stopping rules for recovered, max-follow-up, hard failure, quiet hours, salary window, stale, HITL, and rejected states.
+- TS-side Razorpay status adapter and pre-AI paid check in RecoveryWorker (Scenario B6).
 - FastAPI `POST /v1/decide`, strict Pydantic schema, deterministic taxonomy, Gemini provider, fallback, and guardrails.
 - RecoveryWorker calls the agent only after `continue`; agent metadata is persisted to `agent_decisions` and `audit_logs`.
 
 Stubbed or incomplete for this scope:
 
-- `get_payment_status` is only an in-memory fixture; there is no real Razorpay status lookup.
-- There is no TS-side payment-status lookup before stopping rules. Therefore B6 cannot be proven through the real worker pipeline.
 - The message worker is a stub; intentionally not tested.
 - There is no dedicated automated QA suite under `tests/qa`; evidence below comes from the existing API/core/worker/Python tests and targeted black-box runs.
 
@@ -72,7 +71,7 @@ pnpm --filter @grabit/worker test
 | B3 Quiet hours | delay to morning | Frozen core/worker test returned `delay`, next attempt `08:00 IST` | **PASS** |
 | B4 Soft low balance outside salary window | delay toward 1–5 or 25–28 | Frozen core tests returned `delay`, rule `salary_window`, including next-month rollover | **PASS** |
 | B5 24h no response | stale | Worker/core tests returned `stale`, rule `stale_timeout` | **PASS** |
-| B6 Already paid | stop before AI | Core rule works only when `payment.isPaid=true` or job is already `recovered`; current worker never populates `isPaid` from Razorpay and Python status is called only after `continue` | **BLOCKED** — missing TS/Razorpay status integration |
+| B6 Already paid | stop before AI | `FailedPayment.isPaid` persisted in schema; `payment.captured` webhooks update `isPaid` idempotently; `RecoveryWorker` resolves payment status before stopping rules; stopping rules return `stop_recovered` and call AI zero times | **PASS** |
 | B7 HITL rejected | rejected/stopped | Frozen core test returned `stop_rejected`, rule `hitl_rejected` | **PASS** |
 | B8 High amount / low confidence | HITL, no auto-send | High-value worker test returned `hitl`; Python guardrail escalates amounts `>=10000` and confidence `<0.55`; no message queue assertion was made because messaging is out of scope | **PASS** |
 
@@ -102,8 +101,6 @@ C snapshots from the live run are in `apps/ai-agent/tests/snapshots/`; QA-level 
 
 ## Overall result
 
-- PASS: 20 cases
-- BLOCKED: 1 case (B6)
+- PASS: 21 cases
+- BLOCKED: 0 cases
 - FAIL: 0 cases
-
-The blocking issue is specifically the absence of a TS-side Razorpay payment-status check before stopping rules. The current Python fixture tool cannot satisfy B6 because the worker reaches Python only after rules allow the job through.

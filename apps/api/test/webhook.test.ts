@@ -61,6 +61,8 @@ test('classifyFailure: autopay events', () => {
 
 test('event whitelist', () => {
   for (const e of ALLOWED_EVENTS) assert.ok(isAllowedEvent(e))
-  assert.equal(isAllowedEvent('subscription.charged'), false) // success event
-  assert.equal(isAllowedEvent('payment.captured'), false)
+  assert.equal(isAllowedEvent('subscription.charged'), false)
+  assert.equal(isAllowedEvent('payment.captured'), true)
+  assert.equal(isAllowedEvent('order.paid'), true)
+  assert.equal(isAllowedEvent('dummy.unsupported'), false)
 })
