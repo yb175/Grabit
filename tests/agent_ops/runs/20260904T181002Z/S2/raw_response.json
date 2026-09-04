@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 6027,
+  "response": {
+    "decision_type": "delay",
+    "failure_type": "soft",
+    "explanation": "The issuing bank is currently unavailable, causing a timeout during payment processing.",
+    "customer_message": "Your payment could not be processed as the bank is currently unavailable. Please try again later using your payment link.",
+    "action_payload": {},
+    "confidence": 0.95,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "issuer_unavailable",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

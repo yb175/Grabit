@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 3,
+  "response": {
+    "decision_type": "escalate_hitl",
+    "failure_type": "soft",
+    "explanation": "Bounded fallback: RuntimeError",
+    "customer_message": "",
+    "action_payload": {},
+    "confidence": 0.5,
+    "model_version": "fallback",
+    "should_escalate_hitl": true,
+    "taxonomy_match": "temporary_decline",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

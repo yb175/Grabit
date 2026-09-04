@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 10534,
+  "response": {
+    "decision_type": "one_click",
+    "failure_type": "soft",
+    "explanation": "Payment failed due to an unspecified reason with no provided error code.",
+    "customer_message": "Your recent payment could not be processed. Please try again using your payment link.",
+    "action_payload": {},
+    "confidence": 0.7,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": null,
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

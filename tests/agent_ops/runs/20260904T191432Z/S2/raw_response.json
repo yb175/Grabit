@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 6072,
+  "response": {
+    "decision_type": "delay",
+    "failure_type": "soft",
+    "explanation": "Bank issuer is currently unavailable, preventing the transaction from processing.",
+    "customer_message": "Your payment failed because your bank is temporarily unavailable. Please try using your payment link again shortly.",
+    "action_payload": {},
+    "confidence": 1.0,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "issuer_unavailable",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

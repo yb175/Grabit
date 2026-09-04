@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 3037,
+  "decision_type": "delay",
+  "failure_type": "soft",
+  "confidence": 0.95,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "gateway_timeout",
+  "customer_message": "Your payment encountered a technical timeout. Please try again using your payment link.",
+  "explanation": "Payment gateway timeout occurred during the netbanking redirect process."
+}

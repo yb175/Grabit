@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 1880,
+  "decision_type": "one_click",
+  "failure_type": "autopay_failed",
+  "confidence": 0.95,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "emandate_execution_failed",
+  "customer_message": "Your UPI Autopay payment failed. Please click your payment link to retry the transaction.",
+  "explanation": "The UPI Autopay execution failed, though your mandate remains active."
+}

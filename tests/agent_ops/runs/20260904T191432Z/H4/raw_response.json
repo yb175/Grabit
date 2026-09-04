@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 2358,
+  "response": {
+    "decision_type": "escalate_hitl",
+    "failure_type": "hard",
+    "explanation": "Customer reported card as lost, requiring account cessation.",
+    "customer_message": "",
+    "action_payload": {},
+    "confidence": 0.95,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": true,
+    "taxonomy_match": "lost_card",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

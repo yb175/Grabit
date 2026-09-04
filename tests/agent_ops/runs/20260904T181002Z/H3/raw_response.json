@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 4152,
+  "response": {
+    "decision_type": "stop",
+    "failure_type": "hard",
+    "explanation": "The bank has flagged this account as invalid or blocked, preventing further processing.",
+    "customer_message": "",
+    "action_payload": {},
+    "confidence": 0.95,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "invalid_account",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

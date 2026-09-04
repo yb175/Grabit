@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 8066,
+  "decision_type": "escalate_hitl",
+  "failure_type": "hard",
+  "confidence": 0.95,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": true,
+  "taxonomy_match": "do_not_honor",
+  "customer_message": "",
+  "explanation": "Payment declined by the issuer due to suspected fraud, requiring manual verification."
+}

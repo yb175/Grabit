@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 4053,
+  "response": {
+    "decision_type": "one_click",
+    "failure_type": "soft",
+    "explanation": "The UPI transaction failed due to a temporary issue with the debit process.",
+    "customer_message": "Your recent UPI payment failed due to a temporary error. Please use your payment link to try again.",
+    "action_payload": {},
+    "confidence": 1.0,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "debit_failed",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

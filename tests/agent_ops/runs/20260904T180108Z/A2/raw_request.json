@@ -1,0 +1,17 @@
+{
+  "job_id": "11111111-1111-1111-1111-111111111111",
+  "failed_payment": {
+    "razorpay_payment_id": "pay_opsA2",
+    "amount": 999,
+    "currency": "INR",
+    "failure_code": "emandate_execution_failed",
+    "failure_reason": "Emandate debit failed due to insufficient funds, mandate active",
+    "failure_source": "subscription",
+    "payment_method": "emandate"
+  },
+  "job": {
+    "follow_up_count": 0,
+    "max_follow_ups": 2,
+    "status": "pending"
+  }
+}

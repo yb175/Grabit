@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 2474,
+  "decision_type": "escalate_hitl",
+  "failure_type": "soft",
+  "confidence": 0.5,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": true,
+  "taxonomy_match": null,
+  "customer_message": "",
+  "explanation": "Payment failure reason is unknown, delaying follow-up."
+}

@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 1739,
+  "response": {
+    "decision_type": "one_click",
+    "failure_type": "autopay_failed",
+    "explanation": "The emandate payment failed due to insufficient funds in your account.",
+    "customer_message": "Your recent payment failed because of insufficient funds. Please update your account balance and retry via your payment link.",
+    "action_payload": {},
+    "confidence": 0.95,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": false,
+    "taxonomy_match": "emandate_execution_failed",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}

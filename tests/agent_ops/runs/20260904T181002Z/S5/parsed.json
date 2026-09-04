@@ -1,0 +1,15 @@
+{
+  "http_status": 200,
+  "latency_ms": 4059,
+  "decision_type": "one_click",
+  "failure_type": "soft",
+  "confidence": 0.95,
+  "model_version": "gemini-3.1-flash-lite-preview",
+  "tools_used": [
+    "lookup_failure_taxonomy"
+  ],
+  "should_escalate_hitl": false,
+  "taxonomy_match": "insufficient_funds",
+  "customer_message": "Your recent payment failed due to insufficient funds. Please top up your account and use your payment link to complete the transaction.",
+  "explanation": "Payment declined due to insufficient funds in the account."
+}

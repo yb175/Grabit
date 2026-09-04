@@ -1,0 +1,17 @@
+{
+  "job_id": "11111111-1111-1111-1111-111111111104",
+  "failed_payment": {
+    "razorpay_payment_id": "pay_opsS4",
+    "amount": 4999,
+    "currency": "INR",
+    "failure_code": "gateway_timeout",
+    "failure_reason": "Payment gateway timeout during netbanking redirect",
+    "failure_source": "payment",
+    "payment_method": "netbanking"
+  },
+  "job": {
+    "follow_up_count": 0,
+    "max_follow_ups": 2,
+    "status": "pending"
+  }
+}

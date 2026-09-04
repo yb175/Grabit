@@ -1,0 +1,17 @@
+{
+  "job_id": "11111111-1111-1111-1111-111111111102",
+  "failed_payment": {
+    "razorpay_payment_id": "pay_opsS2",
+    "amount": 1499,
+    "currency": "INR",
+    "failure_code": "issuer_unavailable",
+    "failure_reason": "Bank issuer unavailable, timeout at issuer",
+    "failure_source": "payment",
+    "payment_method": "card"
+  },
+  "job": {
+    "follow_up_count": 0,
+    "max_follow_ups": 2,
+    "status": "pending"
+  }
+}

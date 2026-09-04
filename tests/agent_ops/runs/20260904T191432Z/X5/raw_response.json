@@ -1,0 +1,18 @@
+{
+  "http_status": 200,
+  "latency_ms": 3332,
+  "response": {
+    "decision_type": "escalate_hitl",
+    "failure_type": "soft",
+    "explanation": "The transaction failed due to insufficient funds in the user's account.",
+    "customer_message": "",
+    "action_payload": {},
+    "confidence": 0.95,
+    "model_version": "gemini-3.1-flash-lite-preview",
+    "should_escalate_hitl": true,
+    "taxonomy_match": "insufficient_funds",
+    "tools_used": [
+      "lookup_failure_taxonomy"
+    ]
+  }
+}
