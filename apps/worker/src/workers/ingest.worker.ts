@@ -13,7 +13,12 @@
 import { Worker } from 'bullmq'
 import { prisma, Prisma } from '@grabit/db'
 import { config } from '@grabit/config'
-import { classifyFailure, failureSource, type RazorpayWebhookEvent } from '@grabit/core'
+import {
+  classifyFailure,
+  failureSource,
+  isPaymentSuccessEvent,
+  type RazorpayWebhookEvent,
+} from '@grabit/core'
 import { QUEUES, getQueue } from '@grabit/queue'
 
 /// Shape the API puts on the queue (see apps/api/src/routes/webhooks.ts).
@@ -24,7 +29,7 @@ export interface IngestJobData {
 }
 
 export interface IngestResult {
-  outcome: 'created' | 'duplicate'
+  outcome: 'created' | 'duplicate' | 'updated' | 'ignored'
   failedPaymentId: string | null
   recoveryJobId: string | null
   failureType: string | null
@@ -52,6 +57,50 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
     throw new Error(`ingest: no payment/subscription entity in ${event} event`)
   }
 
+  // --- Handle payment success / capture events idempotently ---
+  if (isPaymentSuccessEvent(event)) {
+    const existing = await prisma.failedPayment.findUnique({
+      where: { razorpayPaymentId },
+      include: {
+        recoveryJobs: {
+          where: { status: { not: 'recovered' } },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    })
+
+    if (!existing) {
+      console.log(`[ingest] ${event} for untracked payment ${razorpayPaymentId} — ignored`)
+      return { outcome: 'ignored', failedPaymentId: null, recoveryJobId: null, failureType: null }
+    }
+
+    if (existing.isPaid) {
+      console.log(`[ingest] duplicate ${event} for already-paid ${razorpayPaymentId} — skipping`)
+      return { outcome: 'duplicate', failedPaymentId: existing.id, recoveryJobId: null, failureType: null }
+    }
+
+    const updated = await prisma.failedPayment.updateMany({
+      where: { id: existing.id, isPaid: false },
+      data: {
+        isPaid: true,
+        paidAt: new Date(data.receivedAt || Date.now()),
+      },
+    })
+
+    if (updated.count === 0) {
+      console.log(`[ingest] duplicate ${event} for already-paid ${razorpayPaymentId} — skipping`)
+      return { outcome: 'duplicate', failedPaymentId: existing.id, recoveryJobId: null, failureType: null }
+    }
+
+    console.log(`[ingest] ${event} marked payment ${existing.id} (${razorpayPaymentId}) as paid`)
+    return {
+      outcome: 'updated',
+      failedPaymentId: existing.id,
+      recoveryJobId: existing.recoveryJobs[0]?.id ?? null,
+      failureType: null,
+    }
+  }
+
   // Normalize: Razorpay amounts are paise, Grabit stores rupees.
   // Decimal division avoids float drift on the money column.
   const amount = payment
@@ -70,6 +119,7 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
         razorpayOrderId: payment?.order_id ?? null,
         amount,
         currency: payment?.currency ?? 'INR',
+        isPaid: false,
         failureCode,
         failureReason: payment?.error_description ?? null,
         failureSource: failureSource(event),

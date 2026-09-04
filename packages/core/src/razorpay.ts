@@ -45,16 +45,93 @@ export interface RazorpayWebhookEvent {
 
 /// Events that enter the recovery pipeline. Everything else is dropped at
 /// the webhook (200 + event_ignored) so Razorpay doesn't retry junk.
-/// NOTE: subscription.charged is a SUCCESS event — excluded by design.
 export const ALLOWED_EVENTS = [
   'payment.failed',
   'subscription.halted',
   'subscription.cancelled',
   'mandate.revoked',
+  'payment.captured',
+  'order.paid',
 ] as const
 
 export const isAllowedEvent = (event: string): boolean =>
   (ALLOWED_EVENTS as readonly string[]).includes(event)
+
+/// Check whether a webhook event represents a successful payment/capture.
+export function isPaymentSuccessEvent(event: string): boolean {
+  return event === 'payment.captured' || event === 'order.paid'
+}
+
+export type ResolvedPaymentStatus = 'paid' | 'failed' | 'unknown'
+
+/// Safely parse and normalize status strings from Razorpay API or webhooks.
+export function parseRazorpayPaymentStatus(status: unknown): ResolvedPaymentStatus {
+  if (typeof status !== 'string') return 'unknown'
+  const normalized = status.trim().toLowerCase()
+  if (normalized === 'captured' || normalized === 'paid') return 'paid'
+  if (normalized === 'failed') return 'failed'
+  return 'unknown'
+}
+
+export interface FetchRazorpayStatusOptions {
+  keyId?: string
+  keySecret?: string
+  baseUrl?: string
+  timeoutMs?: number
+  fetchFn?: typeof fetch
+}
+
+/// Bounded Razorpay payment status lookup.
+/// Fails safe: provider/network/parse errors always return 'unknown' rather than 'paid'.
+export async function fetchRazorpayPaymentStatus(
+  razorpayPaymentId: string,
+  options?: FetchRazorpayStatusOptions,
+): Promise<ResolvedPaymentStatus> {
+  const keyId = options?.keyId ?? process.env.RAZORPAY_KEY_ID
+  const keySecret = options?.keySecret ?? process.env.RAZORPAY_KEY_SECRET
+  const rawBaseUrl = options?.baseUrl ?? process.env.RAZORPAY_API_URL ?? 'https://api.razorpay.com'
+  const baseUrl = rawBaseUrl.replace(/\/+$/, '')
+  const timeoutMs = options?.timeoutMs ?? 5000
+  const fetchFn = options?.fetchFn ?? globalThis.fetch
+
+  if (!keyId || !keySecret || !razorpayPaymentId) {
+    return 'unknown'
+  }
+
+  // Only real Razorpay payment IDs (pay_xxx) can be resolved via the API.
+  if (!razorpayPaymentId.startsWith('pay_')) {
+    return 'unknown'
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const authHeader = `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString('base64')}`
+    const res = await fetchFn(`${baseUrl}/v1/payments/${encodeURIComponent(razorpayPaymentId)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+    })
+
+    if (!res.ok) {
+      return 'unknown'
+    }
+
+    const data = (await res.json()) as { status?: unknown }
+    if (!data || typeof data !== 'object') {
+      return 'unknown'
+    }
+
+    return parseRazorpayPaymentStatus(data.status)
+  } catch {
+    return 'unknown'
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 /// Razorpay decline codes where retrying the same instrument will not help.
 /// Anything else on a payment.failed is treated as soft (transient).
