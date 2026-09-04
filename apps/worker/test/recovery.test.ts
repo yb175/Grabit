@@ -32,6 +32,7 @@ async function seedJob(opts: {
   followUpCount?: number
   maxFollowUps?: number
   status?: 'pending' | 'processing' | 'waiting' | 'hitl' | 'recovered' | 'unrecovered' | 'rejected' | 'stale'
+  isPaid?: boolean
 }) {
   const razorpayPaymentId = uniqPaymentId()
   const failedPayment = await prisma.failedPayment.create({
@@ -39,6 +40,7 @@ async function seedJob(opts: {
       razorpayPaymentId,
       amount: new Prisma.Decimal(opts.amount ?? 1500),
       currency: 'INR',
+      isPaid: opts.isPaid ?? false,
       failureCode: opts.failureCode ?? 'insufficient_funds',
       failureReason: 'Payment failed at bank',
       failureSource: 'payment',
@@ -187,4 +189,92 @@ test('recovery: stale job (>24h since last message) marks status=stale', async (
 
   const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
   assert.equal(updated.status, 'stale')
+})
+
+test('recovery: payment marked isPaid=true stops recovered immediately without AI call', async () => {
+  const { job, failedPayment } = await seedJob({
+    amount: 1500,
+    isPaid: true,
+  })
+
+  const result = await processRecoveryJob({ recoveryJobId: job.id })
+
+  assert.equal(result.outcome, 'completed')
+  assert.equal(result.decision?.action, 'stop_recovered')
+  assert.equal(result.decision?.rule, 'already_recovered')
+  assert.equal(result.decision?.shouldCallAi, false)
+
+  const updatedJob = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updatedJob.status, 'recovered')
+
+  const ledger = await prisma.recoveryLedger.findFirstOrThrow({
+    where: { recoveryJobId: job.id },
+  })
+  assert.equal(ledger.status, 'recovered')
+  assert.equal(ledger.amount.toString(), '1500')
+  assert.equal(ledger.failedPaymentId, failedPayment.id)
+
+  const decisions = await prisma.agentDecision.findMany({ where: { recoveryJobId: job.id } })
+  assert.equal(decisions.length, 0)
+})
+
+test('recovery: paymentStatusResolver returning paid updates DB and stops before AI', async () => {
+  const { job, failedPayment } = await seedJob({
+    amount: 2000,
+    isPaid: false,
+  })
+
+  let resolverCalls = 0
+  const mockResolver = async (id: string) => {
+    resolverCalls++
+    assert.equal(id, failedPayment.razorpayPaymentId)
+    return 'paid' as const
+  }
+
+  const result = await processRecoveryJob({
+    recoveryJobId: job.id,
+    paymentStatusResolver: mockResolver,
+  })
+
+  assert.equal(resolverCalls, 1)
+  assert.equal(result.outcome, 'completed')
+  assert.equal(result.decision?.action, 'stop_recovered')
+  assert.equal(result.decision?.rule, 'already_recovered')
+  assert.equal(result.decision?.shouldCallAi, false)
+
+  const updatedPayment = await prisma.failedPayment.findUniqueOrThrow({ where: { id: failedPayment.id } })
+  assert.equal(updatedPayment.isPaid, true)
+  assert.ok(updatedPayment.paidAt)
+
+  const updatedJob = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updatedJob.status, 'recovered')
+
+  const decisions = await prisma.agentDecision.findMany({ where: { recoveryJobId: job.id } })
+  assert.equal(decisions.length, 0)
+})
+
+test('recovery: paymentStatusResolver error or failed does not mark paid and does not assume recovered', async () => {
+  const { job, failedPayment } = await seedJob({
+    amount: 1500,
+    isPaid: false,
+    failureType: 'soft',
+  })
+
+  const failingResolver = async () => {
+    throw new Error('Network error connecting to payment gateway')
+  }
+
+  const daytime = fromISTComponents(2025, 5, 10, 11, 0, 0)
+  const result = await processRecoveryJob({
+    recoveryJobId: job.id,
+    paymentStatusResolver: failingResolver,
+  }, daytime)
+
+  assert.equal(result.outcome, 'completed')
+  // Because status was unknown, it proceeded with normal stopping rules and daytime soft failure -> continue to AI
+  assert.equal(result.decision?.action, 'continue')
+  assert.equal(result.decision?.shouldCallAi, true)
+
+  const updatedPayment = await prisma.failedPayment.findUniqueOrThrow({ where: { id: failedPayment.id } })
+  assert.equal(updatedPayment.isPaid, false)
 })

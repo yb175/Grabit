@@ -16,6 +16,8 @@ import { prisma } from '@grabit/db'
 import { config } from '@grabit/config'
 import {
   evaluateStoppingRules,
+  fetchRazorpayPaymentStatus,
+  type ResolvedPaymentStatus,
   type StoppingRuleDecision,
   type StoppingRulesConfig,
 } from '@grabit/core'
@@ -65,6 +67,7 @@ export interface RecoveryJobData {
   isAmbiguous?: boolean
   preferSalaryWindow?: boolean
   config?: Partial<StoppingRulesConfig>
+  paymentStatusResolver?: (razorpayPaymentId: string) => Promise<ResolvedPaymentStatus>
 }
 
 export interface RecoveryProcessResult {
@@ -115,6 +118,33 @@ export async function processRecoveryJob(
   if (!job) {
     console.warn(`[recovery] job ${recoveryJobId} not found in DB`)
     return { outcome: 'not_found', recoveryJobId }
+  }
+
+  // Resolve latest payment status if not already known to be paid
+  if (!job.failedPayment.isPaid) {
+    const statusResolver =
+      data.paymentStatusResolver ??
+      ((id: string) =>
+        fetchRazorpayPaymentStatus(id, {
+          keyId: config.razorpayKeyId,
+          keySecret: config.razorpayKeySecret,
+          baseUrl: config.razorpayApiUrl,
+        }))
+    try {
+      const status = await statusResolver(job.failedPayment.razorpayPaymentId)
+      if (status === 'paid') {
+        await prisma.failedPayment.update({
+          where: { id: job.failedPayment.id },
+          data: {
+            isPaid: true,
+            paidAt: now,
+          },
+        })
+        job.failedPayment.isPaid = true
+      }
+    } catch (err) {
+      console.warn(`[recovery] payment status lookup error for ${job.failedPayment.razorpayPaymentId}:`, err)
+    }
   }
 
   const lastMessage = job.messages[0]
