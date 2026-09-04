@@ -266,8 +266,9 @@ export async function processMessage(
           update: {},
         })
       } catch (reconcileError) {
-        console.warn(`[message] reconcile on duplicate path failed for ${existing.id}:`,
-          reconcileError instanceof Error ? reconcileError.message : reconcileError)
+        // Reconcile failure must not be swallowed: BullMQ retries the job and
+        // this duplicate path retries the reconcile until it lands.
+        throw reconcileError
       }
     }
     return { outcome: 'duplicate' as const, recoveryJobId: job.id, messageId }

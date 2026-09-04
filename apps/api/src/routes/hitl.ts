@@ -176,10 +176,11 @@ app.post('/:id/approve', async (c) => {
   const recipient = config.messageChannel === 'email' ? payment?.customerEmail : payment?.customerPhone
 
   let messageEnqueued = false
+  let enqueuedMessageJob: { remove(): Promise<void> } | null = null
   if (recipient && customerMessage) {
     try {
       const messageQueue = getQueue('message')
-      await messageQueue.add(
+      enqueuedMessageJob = await messageQueue.add(
         'send-recovery-message',
         {
           recoveryJobId: task.recoveryJobId,
@@ -214,7 +215,9 @@ app.post('/:id/approve', async (c) => {
     }
   }
 
-  const [updatedTask] = await prisma.$transaction([
+  let updatedTask
+  try {
+    ;[updatedTask] = await prisma.$transaction([
     prisma.hitlQueue.update({
       where: { id: task.id },
       data: {
@@ -268,6 +271,18 @@ app.post('/:id/approve', async (c) => {
       },
     }),
   ])
+  } catch (transactionError) {
+    // The queue already accepted the message job — remove it so a still-pending
+    // task never sends outreach. A retried approval re-enqueues the same
+    // deterministic jobId. If removal fails, the review stays pending and the
+    // worker-side message idempotency still prevents duplicate sends.
+    if (enqueuedMessageJob) {
+      await enqueuedMessageJob.remove().catch((removeErr) =>
+        console.error('[hitl] failed to remove queued message after approval rollback:', removeErr),
+      )
+    }
+    throw transactionError
+  }
 
   return c.json({
     success: true,
