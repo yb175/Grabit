@@ -12,6 +12,7 @@ import { fromISTComponents, toISTComponents, PaymentLinkService } from '@grabit/
 import { getQueue, closeAllQueues } from '@grabit/queue'
 import { processRecoveryJob, stableUuid, buildAgentPayload } from '../src/workers/recovery.worker.js'
 import { processIngestEvent } from '../src/workers/ingest.worker.js'
+import { MockMessageProvider, processMessage } from '../src/workers/message.worker.js'
 
 const originalMessageChannel = config.messageChannel
 config.messageChannel = 'mock'
@@ -581,6 +582,202 @@ test('e2e: failed -> payment.captured/order.paid -> recovery stops before AI, si
     const ledgerAgain = await prisma.recoveryLedger.findMany({ where: { recoveryJobId: job.id } })
     assert.equal(ledgerAgain.length, 1)
   }
+})
+
+test('e2e: send 1 then paid -> closing tick marks recovered, no send 2, zero AI calls', async () => {
+  const { job, failedPayment } = await seedJob({ amount: 1200, failureType: 'soft' })
+
+  // Send 1 happens while the payment is still unpaid; the message worker
+  // bumps the count and schedules the follow-up tick.
+  const send1 = await processMessage({
+    recoveryJobId: job.id,
+    followUpCount: 0,
+    toPhone: '+919876543210',
+    messageBody: 'Pay here: https://example.test/pay/demo',
+    paymentLinkUrl: 'https://example.test/pay/demo',
+  }, new Date('2026-01-01T10:00:00Z'), new MockMessageProvider('paid-e2e'))
+  assert.equal(send1.outcome, 'sent')
+  assert.equal((await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })).followUpCount, 1)
+
+  // The customer pays via the link before the wait-window tick fires — the
+  // payment.captured webhook marks failed_payments.is_paid (PR #6/#24).
+  await prisma.failedPayment.update({
+    where: { id: failedPayment.id },
+    data: { isPaid: true, paidAt: new Date('2026-01-01T14:00:00Z') },
+  })
+  const tickTime = new Date('2026-01-01T15:00:00Z')
+  const result = await processRecoveryJob({ recoveryJobId: job.id }, tickTime)
+
+  assert.equal(result.outcome, 'completed')
+  assert.equal(result.decision?.action, 'stop_recovered')
+  assert.equal(result.decision?.rule, 'already_recovered')
+  assert.equal(result.decision?.shouldCallAi, false)
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.status, 'recovered')
+
+  const ledger = await prisma.recoveryLedger.findMany({ where: { recoveryJobId: job.id } })
+  assert.equal(ledger.length, 1)
+  assert.equal(ledger[0].status, 'recovered')
+  assert.equal(ledger[0].amount.toString(), '1200')
+
+  assert.equal(await prisma.agentDecision.count({ where: { recoveryJobId: job.id } }), 0, 'AI must not decide payment status')
+  assert.equal(await getQueue('message').getJob(stableUuid(`message:${job.id}:1`)), undefined, 'no second message')
+  assert.equal(await prisma.message.count({ where: { recoveryJobId: job.id } }), 1)
+
+  await getQueue('recovery').remove(stableUuid(`recovery:${job.id}:fu1`))
+})
+
+test('e2e: send 1 unpaid -> follow-up tick allows send 2 (count 1 -> 2)', async () => {
+  const { job } = await seedJob({ amount: 1200, failureType: 'soft' })
+
+  await processMessage({
+    recoveryJobId: job.id,
+    followUpCount: 0,
+    toPhone: '+919876543210',
+    messageBody: 'Pay here: https://example.test/pay/demo',
+    paymentLinkUrl: 'https://example.test/pay/demo',
+  }, new Date('2026-01-01T10:00:00Z'), new MockMessageProvider('fu2-e2e'))
+
+  // Wait-window tick 4.5h later: repeat gap passed, still unpaid -> continue
+  const tickTime = new Date('2026-01-01T14:30:00Z')
+  const tick = await processRecoveryJob({
+    recoveryJobId: job.id,
+    agentOverride: {
+      decision_type: 'one_click',
+      failure_type: 'soft',
+      explanation: 'first follow-up',
+      customer_message: 'Hi, please try your payment again.',
+      action_payload: {},
+      confidence: 0.95,
+      model_version: 'test-override',
+      should_escalate_hitl: false,
+      taxonomy_match: null,
+      tools_used: [],
+    },
+    paymentLinkService: new PaymentLinkService({ enabled: false }),
+  }, tickTime)
+  assert.equal(tick.decision?.action, 'continue')
+
+  const afterTick = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(afterTick.status, 'processing')
+
+  // Message #2 enqueued with followUpCount = 1 and the stable jobId.
+  const msg2 = await getQueue('message').getJob(stableUuid(`message:${job.id}:1`))
+  assert.ok(msg2, 'second message must be enqueued')
+  assert.equal(msg2.data.followUpCount, 1)
+
+  // Send 2 executes and bumps to the max count; its closing tick schedules.
+  const send2 = await processMessage(msg2.data, new Date('2026-01-01T14:30:10Z'), new MockMessageProvider('fu2-send2'))
+  assert.equal(send2.outcome, 'sent')
+  const afterSend2 = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(afterSend2.followUpCount, 2)
+  assert.ok(
+    await getQueue('recovery').getJob(stableUuid(`recovery:${job.id}:fu2`)),
+    'send 2 must schedule the closing recovery tick',
+  )
+
+  await msg2.remove()
+  await getQueue('recovery').remove(stableUuid(`recovery:${job.id}:fu1`))
+  await getQueue('recovery').remove(stableUuid(`recovery:${job.id}:fu2`))
+})
+
+test('e2e: send 2 unpaid -> unrecovered ledger written once, extra tick idempotent, no third message', async () => {
+  const { job } = await seedJob({ amount: 1200, failureType: 'soft', followUpCount: 2, maxFollowUps: 2 })
+  await prisma.message.create({
+    data: {
+      recoveryJobId: job.id,
+      toPhone: '+919876543210',
+      messageBody: 'second follow-up',
+      status: 'sent',
+      sentAt: new Date('2026-01-01T10:00:00Z'),
+      createdAt: new Date('2026-01-01T10:00:00Z'),
+    },
+  })
+
+  // Closing tick lands 25h after the last send — past the 24h staleness
+  // threshold. Once the budget is exhausted the case closes as unrecovered
+  // (ledger row), never stale and never a third send.
+  const r1 = await processRecoveryJob({ recoveryJobId: job.id }, new Date('2026-01-02T11:00:00Z'))
+  assert.equal(r1.decision?.action, 'stop_unrecovered')
+  assert.equal(r1.decision?.rule, 'max_followups_exceeded')
+
+  // Duplicate delayed tick (queue replay) keeps exactly one ledger row.
+  const r2 = await processRecoveryJob({ recoveryJobId: job.id }, new Date('2026-01-02T12:00:00Z'))
+  assert.equal(r2.decision?.action, 'stop_unrecovered')
+
+  const ledger = await prisma.recoveryLedger.findMany({ where: { recoveryJobId: job.id } })
+  assert.equal(ledger.length, 1, 'duplicate ticks must keep exactly one ledger row')
+  assert.equal(ledger[0].status, 'unrecovered')
+  assert.equal(ledger[0].amount.toString(), '1200')
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.status, 'unrecovered')
+
+  assert.equal(await getQueue('message').getJob(stableUuid(`message:${job.id}:2`)), undefined, 'no third message')
+  assert.equal(await prisma.message.count({ where: { recoveryJobId: job.id } }), 1)
+})
+
+test('e2e: unpaid with one follow-up remaining, 25h silence -> stale', async () => {
+  const { job } = await seedJob({ amount: 1200, failureType: 'soft', followUpCount: 1, maxFollowUps: 2 })
+  await prisma.message.create({
+    data: {
+      recoveryJobId: job.id,
+      toPhone: '+919876543210',
+      messageBody: 'first follow-up',
+      status: 'sent',
+      sentAt: new Date('2026-01-01T10:00:00Z'),
+      createdAt: new Date('2026-01-01T10:00:00Z'),
+    },
+  })
+
+  const result = await processRecoveryJob({ recoveryJobId: job.id }, new Date('2026-01-02T12:00:00Z'))
+  assert.equal(result.decision?.action, 'stale')
+  assert.equal(result.decision?.rule, 'stale_timeout')
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.status, 'stale')
+})
+
+test('e2e: follow-up tick during quiet hours delays to next morning 08:00 IST', async () => {
+  const { job } = await seedJob({ amount: 1200, failureType: 'soft', followUpCount: 1 })
+  await prisma.message.create({
+    data: {
+      recoveryJobId: job.id,
+      toPhone: '+919876543210',
+      messageBody: 'first follow-up',
+      status: 'sent',
+      sentAt: fromISTComponents(2025, 5, 10, 14, 0, 0),
+      createdAt: fromISTComponents(2025, 5, 10, 14, 0, 0),
+    },
+  })
+
+  // 22:30 IST tick — repeat gap (4h) passed, but now inside quiet hours.
+  const nightTick = fromISTComponents(2025, 5, 10, 22, 30, 0)
+  const result = await processRecoveryJob({ recoveryJobId: job.id }, nightTick)
+  assert.equal(result.decision?.action, 'delay')
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.status, 'waiting')
+  assert.ok(updated.nextAttemptAt)
+  const ist = toISTComponents(updated.nextAttemptAt)
+  assert.equal(ist.day, 11)
+  assert.equal(ist.hours, 8)
+  assert.equal(ist.minutes, 0)
+})
+
+test('e2e: hard failure never reaches the message worker and keeps count 0', async () => {
+  const { job } = await seedJob({ amount: 1500, failureType: 'hard', failureCode: 'card_blocked' })
+  const result = await processRecoveryJob({ recoveryJobId: job.id }, fromISTComponents(2025, 5, 10, 11, 0, 0))
+  assert.equal(result.outcome, 'completed')
+  assert.equal(result.decision?.action, 'stop_unrecovered')
+  assert.equal(result.decision?.rule, 'hard_failure')
+
+  const updated = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: job.id } })
+  assert.equal(updated.status, 'unrecovered')
+  assert.equal(updated.followUpCount, 0)
+  assert.equal(await getQueue('message').getJob(stableUuid(`message:${job.id}:0`)), undefined)
+  assert.equal(await prisma.message.count({ where: { recoveryJobId: job.id } }), 0)
 })
 
 test('recovery: buildAgentPayload strips customer PII (phone, email, full name)', () => {

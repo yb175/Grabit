@@ -32,12 +32,12 @@ The engine evaluates rules in strict sequential order. The first rule that match
                                         │ No
                                         ▼
                      ┌───────────────────────────────────────┐
-                     │ 3. Is Job Stale (>24h since outreach)?│ ── Yes ──> [ stale ]
+                     │ 3. Follow-up Count >= Max Follow-ups? │ ── Yes ──> [ stop_unrecovered ]
                      └──────────────────┬────────────────────┘
                                         │ No
                                         ▼
                      ┌───────────────────────────────────────┐
-                     │ 4. Follow-up Count >= Max Follow-ups? │ ── Yes ──> [ stop_unrecovered ]
+                     │ 4. Is Job Stale (>24h since outreach)?│ ── Yes ──> [ stale ]
                      └──────────────────┬────────────────────┘
                                         │ No
                                         ▼
@@ -68,8 +68,8 @@ The engine evaluates rules in strict sequential order. The first rule that match
 | :--- | :--- | :--- | :--- | :--- |
 | **1** | `already_recovered` | `payment.isPaid === true` or `job.status === 'recovered'` | `stop_recovered` | Mark recovered, write `recovery_ledger` entry. |
 | **2** | `hitl_rejected` | `hitlStatus === 'rejected'` or `job.status === 'rejected'` | `stop_rejected` | Mark rejected, record audit log. |
-| **3** | `stale_timeout` / `stale_status` | Elapsed time since last outreach $\ge 24\text{h}$ | `stale` | Mark stale, stop future retries. |
-| **4** | `max_followups_exceeded` | `followUpCount >= maxFollowUps` (default: 2) | `stop_unrecovered` | Mark unrecovered, close ledger. |
+| **3** | `max_followups_exceeded` | `followUpCount >= maxFollowUps` (default: 2) | `stop_unrecovered` | Mark unrecovered, close ledger. Evaluated before staleness so an exhausted budget always closes with a ledger row. |
+| **4** | `stale_timeout` / `stale_status` | Elapsed time since last outreach $\ge 24\text{h}$ | `stale` | Mark stale, stop future retries (only while follow-ups remain). |
 | **5** | `hitl_high_value` | Amount $\ge \text{₹}10,000$ | `hitl` | Escalate to human review in `hitl_queue`. |
 | **5** | `hitl_low_confidence` | AI confidence $< 0.70$ (70%) | `hitl` | Escalate to human review in `hitl_queue`. |
 | **5** | `hitl_ambiguous` | `isAmbiguous === true` | `hitl` | Escalate to human review in `hitl_queue`. |

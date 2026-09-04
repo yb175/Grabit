@@ -92,6 +92,20 @@ test('Rule 2: follow_up_count >= 3 with default maxFollowUps stops unrecovered',
   assert.equal(decision.rule, 'max_followups_exceeded')
 })
 
+test('Rule 2 before Rule 7: exhausted follow-ups close unrecovered even past 24h inactivity', () => {
+  const { job, payment } = createBaseFixture()
+  job.followUpCount = 2
+  job.maxFollowUps = 2
+  const lastMsgAt = fromISTComponents(2025, 5, 10, 10, 0, 0)
+  const twentyFiveHoursLater = fromISTComponents(2025, 5, 11, 11, 0, 0) // 25h later
+
+  const decision = evaluateStoppingRules({ job, payment, now: twentyFiveHoursLater, lastMessageAt: lastMsgAt })
+  assert.equal(decision.action, 'stop_unrecovered')
+  assert.equal(decision.rule, 'max_followups_exceeded')
+  assert.equal(decision.shouldCallAi, false)
+  assert.match(decision.reason, /Maximum follow-up attempts \(2\) reached/)
+})
+
 // ---------------------------------------------------------------------------
 // 3. Quiet Hours (21:00 to 08:00 IST)
 // ---------------------------------------------------------------------------

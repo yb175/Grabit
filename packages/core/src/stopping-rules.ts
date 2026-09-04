@@ -4,8 +4,9 @@
 //   - continue to the AI Agent (continue)
 //   - be delayed for smart timing (delay: quiet hours, salary window, repeat gap)
 //   - be escalated to human review (hitl: high value, low confidence, ambiguous)
-//   - be marked stale (stale: no response/payment for 24h after outreach)
 //   - be stopped as unrecovered (stop_unrecovered: max follow-ups exceeded, hard failure)
+//   - be marked stale (stale: no response/payment for 24h after outreach while
+//     follow-ups remain — an exhausted budget always closes as unrecovered)
 //   - be stopped as rejected (stop_rejected: HITL reviewer rejected)
 //   - be stopped as recovered (stop_recovered: already paid/recovered)
 //
@@ -304,7 +305,21 @@ export function evaluateStoppingRules(input: StoppingRulesInput): StoppingRuleDe
     }
   }
 
-  // 4. Rule 7: Stale Rule (Inactivity >= 24h after last outreach)
+  // 4. Rule 2: Max Follow-ups Exceeded
+  // Evaluated BEFORE staleness: once the follow-up budget is exhausted nothing
+  // more can be sent, so the case MUST close as unrecovered (ledger row) even
+  // if the wait-window tick lands at/after the 24h inactivity threshold.
+  if (followUpCount >= maxFollowUps) {
+    return {
+      action: 'stop_unrecovered',
+      rule: 'max_followups_exceeded',
+      reason: `Maximum follow-up attempts (${maxFollowUps}) reached without payment recovery.`,
+      shouldCallAi: false,
+    }
+  }
+
+  // 5. Rule 7: Stale Rule (Inactivity >= 24h after last outreach) — only
+  // applies while follow-ups remain; an exhausted budget already stopped.
   const lastMsgDate = input.lastMessageAt
     ? input.lastMessageAt instanceof Date
       ? input.lastMessageAt
@@ -320,16 +335,6 @@ export function evaluateStoppingRules(input: StoppingRulesInput): StoppingRuleDe
         reason: `Customer has not responded or paid within ${cfg.staleThresholdHours} hours of last message.`,
         shouldCallAi: false,
       }
-    }
-  }
-
-  // 5. Rule 2: Max Follow-ups Exceeded
-  if (followUpCount >= maxFollowUps) {
-    return {
-      action: 'stop_unrecovered',
-      rule: 'max_followups_exceeded',
-      reason: `Maximum follow-up attempts (${maxFollowUps}) reached without payment recovery.`,
-      shouldCallAi: false,
     }
   }
 
