@@ -71,7 +71,11 @@ function urls(value: string): string[] {
 
 function assertSafeContent(data: MessageJobData, canonicalBody: string, htmlBody?: string): void {
   const allowed = data.paymentLinkUrl
-  const found = [canonicalBody, htmlBody ?? '', ...Object.values(data.templateVars ?? {}).map(String)].flatMap(urls)
+  // HTML-escaped anchors contain &amp; — normalize before comparing.
+  const unescape = (value: string) => value.replace(/&amp;/g, '&')
+  const found = [canonicalBody, htmlBody ?? '', ...Object.values(data.templateVars ?? {}).map(String)]
+    .flatMap(urls)
+    .map(unescape)
   if (found.some((url) => url !== allowed)) {
     throw new Error('message contains an unexpected URL')
   }
@@ -233,6 +237,39 @@ export async function processMessage(
   const messageId = stableUuid(`message:${job.id}:${attempt}`)
   const existing = await prisma.message.findUnique({ where: { id: messageId } })
   if (existing?.status === 'sent' || existing?.status === 'delivered' || existing?.status === 'read') {
+    // The provider already accepted this message. Repair any partially
+    // reconciled state (e.g. follow-up bump lost in a previous crash) before
+    // returning, so the pipeline never stalls or re-sends.
+    if (existing.status === 'sent' && job.followUpCount === attempt) {
+      const gapHours = (attempt + 1) === 1
+        ? DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours
+        : DEFAULT_STOPPING_RULES_CONFIG.followUp2GapHours
+      try {
+        await prisma.recoveryJob.updateMany({
+          where: { id: job.id, followUpCount: attempt },
+          data: {
+            followUpCount: attempt + 1,
+            nextAttemptAt: new Date(now.getTime() + gapHours * 60 * 60 * 1000),
+          },
+        })
+        await prisma.auditLog.upsert({
+          where: { id: stableUuid(`audit:message_sent:${existing.id}`) },
+          create: {
+            id: stableUuid(`audit:message_sent:${existing.id}`),
+            entityType: 'messages',
+            entityId: existing.id,
+            action: 'message_sent',
+            oldValue: { status: 'queued' },
+            newValue: { status: 'sent', providerMessageId: existing.providerMessageId },
+            performedBy: 'message_worker',
+          },
+          update: {},
+        })
+      } catch (reconcileError) {
+        console.warn(`[message] reconcile on duplicate path failed for ${existing.id}:`,
+          reconcileError instanceof Error ? reconcileError.message : reconcileError)
+      }
+    }
     return { outcome: 'duplicate' as const, recoveryJobId: job.id, messageId }
   }
 
@@ -284,11 +321,12 @@ export async function processMessage(
     throw error
   }
 
-  // Provider construction/credentials can only fail before submission — safe
-  // to mark failed and let BullMQ retry.
-  const providerInstance = provider ?? providerFor(message.id)
+  // Provider construction (e.g. missing SMTP credentials) fails before any
+  // submission — safe to mark failed and let BullMQ retry with bookkeeping.
+  let providerInstance: MessageProvider
   let result: { providerMessageId: string }
   try {
+    providerInstance = provider ?? providerFor(message.id)
     result = await providerInstance.send({
       toPhone: data.toPhone,
       toEmail: data.toEmail,
