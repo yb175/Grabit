@@ -408,14 +408,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       await prisma.$disconnect()
       if (!summary.passedQAChecks) {
         console.error('QA checks failed')
-        process.exit(1)
+        process.exitCode = 1
+      } else {
+        process.exitCode = 0
       }
-      process.exit(0)
     })
     .catch(async (err) => {
       console.error('Batch runner failed:', err)
       await closeAllQueues()
       await prisma.$disconnect()
-      process.exit(1)
+      process.exitCode = 1
     })
 }
