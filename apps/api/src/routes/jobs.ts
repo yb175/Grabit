@@ -7,6 +7,15 @@
 import { Hono } from 'hono'
 import { prisma, Prisma, type RecoveryJobStatus, type FailureType } from '@grabit/db'
 
+// Supported enum values for GET /jobs query filters — validated before Prisma
+// so unsupported values return 400 instead of an uncaught enum 500.
+const VALID_STATUSES: readonly string[] = [
+  'pending', 'processing', 'waiting', 'hitl', 'recovered', 'unrecovered', 'rejected', 'stale',
+]
+const VALID_FAILURE_TYPES: readonly string[] = [
+  'hard', 'soft', 'autopay_failed', 'autopay_cancelled',
+]
+
 const app = new Hono()
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -41,7 +50,7 @@ function formatJob(job: any) {
     failureReason: payment?.failureReason ?? null,
     failureSource: payment?.failureSource ?? null,
     razorpayPaymentId: payment?.razorpayPaymentId ?? null,
-    failedPayment: payment ?? null,
+    failedPayment: payment ? { ...payment, rawPayload: undefined } : null,
     decisions: job.decisions ?? [],
     latestDecision: job.decisions?.[0] ?? null,
     messages: job.messages ?? [],
@@ -61,18 +70,30 @@ app.get('/', async (c) => {
 
   const where: Prisma.RecoveryJobWhereInput = {}
 
+  if (status && !VALID_STATUSES.includes(status)) {
+    return c.json({ error: 'invalid_status', message: `status must be one of: ${VALID_STATUSES.join(', ')}` }, 400)
+  }
   if (status) {
     where.status = status as RecoveryJobStatus
   }
 
+  if (failureType && !VALID_FAILURE_TYPES.includes(failureType)) {
+    return c.json({ error: 'invalid_failure_type', message: `failure_type must be one of: ${VALID_FAILURE_TYPES.join(', ')}` }, 400)
+  }
   if (failureType) {
     where.failureType = failureType as FailureType
   }
 
+  if (from && isNaN(new Date(from).getTime())) {
+    return c.json({ error: 'invalid_from', message: 'from must be a valid ISO date' }, 400)
+  }
+  if (to && isNaN(new Date(to).getTime())) {
+    return c.json({ error: 'invalid_to', message: 'to must be a valid ISO date' }, 400)
+  }
   if (from || to) {
     where.createdAt = {
-      ...(from && !isNaN(new Date(from).getTime()) ? { gte: new Date(from) } : {}),
-      ...(to && !isNaN(new Date(to).getTime()) ? { lte: new Date(to) } : {}),
+      ...(from ? { gte: new Date(from) } : {}),
+      ...(to ? { lte: new Date(to) } : {}),
     }
   }
 

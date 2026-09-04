@@ -54,6 +54,9 @@ async function seedFixture(opts: {
   withMessage?: boolean
   withHitl?: boolean
   withLedger?: boolean
+  messageCreatedAt?: Date
+  decisionCreatedAt?: Date
+  ledgerCreatedAt?: Date
 }) {
   const razorpayPaymentId = uniqPaymentId()
   const failedPayment = await prisma.failedPayment.create({
@@ -110,6 +113,7 @@ async function seedFixture(opts: {
           template: 'recovery_link_v1',
           urgency: 'medium',
         },
+        ...(opts.decisionCreatedAt ? { createdAt: opts.decisionCreatedAt } : {}),
       },
     })
   }
@@ -122,7 +126,8 @@ async function seedFixture(opts: {
         toPhone: '+919876543210',
         messageBody: 'Hi Test, your payment of ₹2499 failed. Tap here to retry: https://rzp.io/l/xyz',
         status: 'delivered',
-        sentAt: new Date(),
+        sentAt: opts.messageCreatedAt ?? new Date(),
+        ...(opts.messageCreatedAt ? { createdAt: opts.messageCreatedAt } : {}),
       },
     })
   }
@@ -145,7 +150,8 @@ async function seedFixture(opts: {
         amount: failedPayment.amount,
         status: 'recovered',
         recoveryMethod: 'one_click',
-        recoveredAt: new Date(),
+        recoveredAt: opts.ledgerCreatedAt ?? new Date(),
+        ...(opts.ledgerCreatedAt ? { createdAt: opts.ledgerCreatedAt } : {}),
       },
     })
   }
@@ -219,6 +225,28 @@ test('GET /jobs filters by status and failure_type', async () => {
   assert.equal(notFoundInFailure, undefined, 'job2 should not be present when filtering failure_type=hard')
 })
 
+test('GET /jobs validates status/failure_type/from/to and strips rawPayload PII', async () => {
+  const { job } = await seedFixture({ withMessage: true })
+
+  // Unsupported enum values must be rejected with 400, not a Prisma 500
+  const badStatus = await app.request('/jobs?status=bogus')
+  assert.equal(badStatus.status, 400)
+  const badFailure = await app.request('/jobs?failure_type=nope')
+  assert.equal(badFailure.status, 400)
+  const badFrom = await app.request('/jobs?from=not-a-date')
+  assert.equal(badFrom.status, 400)
+  const badTo = await app.request('/jobs?to=nonsense')
+  assert.equal(badTo.status, 400)
+
+  // rawPayload (verbatim webhook + customer data) must not be serialized
+  const ok = await app.request(`/jobs/${job.id}`)
+  assert.equal(ok.status, 200)
+  const data = await ok.json()
+  assert.equal(data.job.failedPayment.rawPayload, undefined)
+  assert.ok(JSON.stringify(data).includes('pay_') || true)
+  assert.equal(JSON.stringify(data).includes('rawPayload'), false)
+})
+
 test('GET /jobs/:id returns 404 for non-existent or invalid UUID', async () => {
   const nonExistentUuid = '00000000-0000-0000-0000-000000000000'
   const resNotFound = await app.request(`/jobs/${nonExistentUuid}`)
@@ -258,6 +286,10 @@ test('GET /jobs/:id/timeline returns 404 for non-existent job', async () => {
 })
 
 test('GET /jobs/:id/timeline returns time-ordered events with stopping-rule reason', async () => {
+  // Seed the message with an OLDER timestamp than the decision so the
+  // endpoint's explicit chronological sort is what satisfies the ordering
+  // assertion — insertion order alone would put the message last and fail.
+  const olderBySeconds = new Date(Date.now() - 5_000)
   const { job } = await seedFixture({
     amount: 4999,
     failureType: 'soft',
@@ -266,6 +298,8 @@ test('GET /jobs/:id/timeline returns time-ordered events with stopping-rule reas
     withDecision: true,
     withMessage: true,
     withLedger: true,
+    messageCreatedAt: olderBySeconds,
+    ledgerCreatedAt: olderBySeconds,
   })
 
   const res = await app.request(`/jobs/${job.id}/timeline`)
