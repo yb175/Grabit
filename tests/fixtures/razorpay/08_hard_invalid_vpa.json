@@ -1,0 +1,23 @@
+{
+  "case": "08_hard_invalid_vpa",
+  "description": "Hard UPI failure - invalid VPA identifier",
+  "event": "payment.failed",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_08_<unique>",
+        "order_id": "order_batch_08",
+        "amount": 89900,
+        "currency": "INR",
+        "method": "upi",
+        "error_code": "invalid_vpa",
+        "error_description": "Virtual payment address does not exist",
+        "contact": "+919876543217",
+        "email": "neha@example.com",
+        "notes": {
+          "customer_name": "Neha Joshi"
+        }
+      }
+    }
+  }
+}

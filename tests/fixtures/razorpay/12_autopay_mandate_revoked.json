@@ -1,0 +1,29 @@
+{
+  "case": "12_autopay_mandate_revoked",
+  "description": "Autopay mandate revoked by customer at issuing bank",
+  "event": "mandate.revoked",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_12_<unique>",
+        "order_id": "order_batch_12",
+        "amount": 59900,
+        "currency": "INR",
+        "method": "emandate",
+        "error_code": "mandate_revoked",
+        "error_description": "Mandate revoked by customer at bank, autopay paused",
+        "contact": "+919876543221",
+        "email": "divya@example.com",
+        "notes": {
+          "customer_name": "Divya Menon"
+        }
+      }
+    },
+    "mandate": {
+      "entity": {
+        "id": "man_batch_12_<unique>",
+        "status": "revoked"
+      }
+    }
+  }
+}

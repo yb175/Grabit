@@ -1,0 +1,27 @@
+{
+  "case": "15_quiet_hours_night_delay",
+  "description": "Late-night soft failure (23:30 IST) delayed to next morning 08:00 IST",
+  "event": "payment.failed",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_15_<unique>",
+        "order_id": "order_batch_15",
+        "amount": 129900,
+        "currency": "INR",
+        "method": "upi",
+        "error_code": "insufficient_funds",
+        "error_description": "Late night checkout failed due to low balance",
+        "contact": "+919876543224",
+        "email": "deepak@example.com",
+        "notes": {
+          "customer_name": "Deepak Shah"
+        }
+      }
+    }
+  },
+  "simulate_timing": {
+    "hours_ist": 23,
+    "minutes_ist": 30
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "case": "05_hard_card_stolen",
+  "description": "Hard Card failure - card reported stolen at bank",
+  "event": "payment.failed",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_05_<unique>",
+        "order_id": "order_batch_05",
+        "amount": 350000,
+        "currency": "INR",
+        "method": "card",
+        "error_code": "stolen_card",
+        "error_description": "Card reported stolen, pickup card at issuer",
+        "contact": "+919876543214",
+        "email": "vikram@example.com",
+        "notes": {
+          "customer_name": "Vikram Singh"
+        }
+      }
+    }
+  }
+}
