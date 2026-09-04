@@ -8,8 +8,10 @@ import {
   MockMessageProvider,
   WhatsAppCloudProvider,
   processMessage,
+  renderRecoveryCopy,
   type MessageProvider,
 } from '../src/workers/message.worker.js'
+import { stableUuid } from '../src/workers/recovery.worker.js'
 
 const originalChannel = config.messageChannel
 config.messageChannel = 'mock'
@@ -91,6 +93,65 @@ test('message: unexpected URL fails closed without incrementing follow-up count'
   assert.equal(updated.followUpCount, 0)
   const message = await prisma.message.findFirstOrThrow({ where: { recoveryJobId: job.id } })
   assert.equal(message.status, 'failed')
+})
+
+test('message: email channel persists canonical rendered body and passes it to the provider', async () => {
+  config.messageChannel = 'email'
+  try {
+    const job = await seedJob()
+    let received: any
+    const provider: MessageProvider = {
+      async send(input) {
+        received = input
+        return { providerMessageId: 'wamid.canonical' }
+      },
+    }
+    const result = await processMessage({
+      ...messageData(job.id),
+      toEmail: 'customer@example.com',
+      paymentLinkUrl: 'https://rzp.io/i/real-link',
+      templateVars: { 1: 'Yug', 2: '₹1500', 3: 'order_test_123', 4: 'Insufficient funds', 5: 'try again using the payment link' },
+    }, new Date(), provider)
+    assert.equal(result.outcome, 'sent')
+    const message = await prisma.message.findUniqueOrThrow({ where: { id: result.messageId } })
+    assert.equal(message.messageBody, renderRecoveryCopy({
+      name: 'Yug', amount: '₹1500', orderLabel: 'order_test_123',
+      why: 'Insufficient funds', action: 'try again using the payment link',
+      link: 'https://rzp.io/i/real-link',
+    }).text)
+    assert.match(received.subject ?? '', /₹1500/)
+    assert.match(received.htmlBody ?? '', /Pay now/)
+  } finally {
+    config.messageChannel = 'mock'
+  }
+})
+
+test('message: persistence failure after provider acceptance never marks failed (no double send)', async () => {
+  const job = await seedJob()
+  let calls = 0
+  const provider: MessageProvider = {
+    async send() {
+      calls++
+      return { providerMessageId: `wamid.uncertain.${calls}` }
+    },
+  }
+  const originalTransaction = prisma.$transaction.bind(prisma)
+  prisma.$transaction = (() => Promise.reject(new Error('simulated transaction failure'))) as any
+  try {
+    const result = await processMessage(messageData(job.id), new Date(), provider)
+    // Reconcile path completes the send state without re-sending.
+    assert.equal(result.outcome, 'sent')
+  } finally {
+    prisma.$transaction = originalTransaction
+  }
+  assert.equal(calls, 1)
+  const message = await prisma.message.findUniqueOrThrow({
+    where: { id: stableUuid(`message:${job.id}:0`) },
+  })
+  assert.equal(message.status, 'sent')
+  const replay = await processMessage(messageData(job.id), new Date(), provider)
+  assert.equal(replay.outcome, 'duplicate')
+  assert.equal(calls, 1, 'provider must not be called again after reconciliation')
 })
 
 test('message: Gmail provider sends shared recovery copy and payment link', async () => {

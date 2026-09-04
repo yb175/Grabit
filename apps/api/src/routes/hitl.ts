@@ -7,6 +7,7 @@
 
 import { Hono } from 'hono'
 import { prisma, type HitlStatus } from '@grabit/db'
+import { config } from '@grabit/config'
 import { getQueue } from '@grabit/queue'
 
 const app = new Hono()
@@ -224,18 +225,31 @@ app.post('/:id/approve', async (c) => {
     body.messageBody ||
     (typeof actionPayload?.customer_message === 'string' ? actionPayload.customer_message : '')
 
-  const customerPhone = task.recoveryJob.failedPayment?.customerPhone
+  const payment = task.recoveryJob.failedPayment
+  // Channel-aware recipient: email channel needs customer_email, WhatsApp needs phone.
+  const recipient = config.messageChannel === 'email' ? payment?.customerEmail : payment?.customerPhone
 
   let messageEnqueued = false
-  if (customerPhone && customerMessage) {
+  if (recipient && customerMessage) {
     try {
       const messageQueue = getQueue('message')
       await messageQueue.add(
         'send-recovery-message',
         {
           recoveryJobId: task.recoveryJobId,
-          toPhone: customerPhone,
+          followUpCount: task.recoveryJob.followUpCount,
+          toPhone: payment?.customerPhone ?? undefined,
+          toEmail: payment?.customerEmail ?? undefined,
           messageBody: customerMessage,
+          paymentLinkId: typeof actionPayload?.payment_link_id === 'string' ? actionPayload.payment_link_id : undefined,
+          paymentLinkUrl: typeof actionPayload?.payment_link_url === 'string' ? actionPayload.payment_link_url : undefined,
+          templateVars: {
+            1: payment?.customerName ?? 'there',
+            2: `₹${payment?.amount?.toString() ?? ''}`,
+            3: payment?.razorpayOrderId ?? 'your order',
+            4: payment?.failureReason ?? 'the payment could not be processed',
+            5: 'try again using the payment link',
+          },
         },
         // Deterministic jobId: a retried approval re-enqueues the same job instead
         // of sending the customer the same message twice.

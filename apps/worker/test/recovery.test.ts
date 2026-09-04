@@ -8,7 +8,7 @@ import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { prisma, Prisma } from '@grabit/db'
 import { config } from '@grabit/config'
-import { fromISTComponents, toISTComponents } from '@grabit/core'
+import { fromISTComponents, toISTComponents, PaymentLinkService } from '@grabit/core'
 import { getQueue, closeAllQueues } from '@grabit/queue'
 import { processRecoveryJob, stableUuid, buildAgentPayload } from '../src/workers/recovery.worker.js'
 
@@ -74,9 +74,12 @@ test('recovery: daytime soft failure records bounded fallback and escalates safe
   const daytime = fromISTComponents(2025, 5, 10, 11, 0, 0)
   const originalAiAgentUrl = config.aiAgentUrl
   config.aiAgentUrl = 'http://127.0.0.1:1'
-
-  const result = await processRecoveryJob({ recoveryJobId: job.id }, daytime)
-  config.aiAgentUrl = originalAiAgentUrl
+  let result
+  try {
+    result = await processRecoveryJob({ recoveryJobId: job.id }, daytime)
+  } finally {
+    config.aiAgentUrl = originalAiAgentUrl
+  }
 
   assert.equal(result.outcome, 'completed')
   assert.equal(result.decision?.action, 'continue')
@@ -311,7 +314,7 @@ test('recovery: continue re-entry guard skips AI call and reuses existing agent_
     },
   })
 
-  const result = await processRecoveryJob({ recoveryJobId: job.id }, daytime)
+  const result = await processRecoveryJob({ recoveryJobId: job.id, paymentLinkService: new PaymentLinkService({ enabled: false }) }, daytime)
 
   assert.equal(result.outcome, 'completed')
   assert.equal(result.decision?.action, 'continue')
@@ -374,7 +377,7 @@ test('recovery: retry after successful AI call calls AI HTTP once and maintains 
     const daytime = fromISTComponents(2025, 5, 10, 11, 0, 0)
 
     // First attempt: calls AI HTTP endpoint
-    const result1 = await processRecoveryJob({ recoveryJobId: job.id }, daytime)
+    const result1 = await processRecoveryJob({ recoveryJobId: job.id, paymentLinkService: new PaymentLinkService({ enabled: false }) }, daytime)
     assert.equal(result1.outcome, 'completed')
     assert.equal(aiCallCount, 1)
 
@@ -385,7 +388,7 @@ test('recovery: retry after successful AI call calls AI HTTP once and maintains 
     assert.equal(decisionsAfterFirst[0].decisionType, 'one_click')
 
     // Second attempt (retry/re-evaluation): re-entry guard kicks in, skips AI HTTP
-    const result2 = await processRecoveryJob({ recoveryJobId: job.id }, daytime)
+    const result2 = await processRecoveryJob({ recoveryJobId: job.id, paymentLinkService: new PaymentLinkService({ enabled: false }) }, daytime)
     assert.equal(result2.outcome, 'completed')
     assert.equal(aiCallCount, 1, 'AI HTTP must not be called again on retry')
 
@@ -446,8 +449,8 @@ test('recovery: parallel deliveries invoke AI endpoint only once', async () => {
     const daytime = fromISTComponents(2025, 5, 10, 11, 0, 0)
 
     const [res1, res2] = await Promise.all([
-      processRecoveryJob({ recoveryJobId: job.id }, daytime),
-      processRecoveryJob({ recoveryJobId: job.id }, daytime),
+      processRecoveryJob({ recoveryJobId: job.id, paymentLinkService: new PaymentLinkService({ enabled: false }) }, daytime),
+      processRecoveryJob({ recoveryJobId: job.id, paymentLinkService: new PaymentLinkService({ enabled: false }) }, daytime),
     ])
 
     assert.equal(res1.outcome, 'completed')

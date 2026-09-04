@@ -225,8 +225,8 @@ model Message {
   /// "whatsapp" | "sms" | "email" (future)
   channel           String        @default("whatsapp")
   toPhone           String?       @map("to_phone")
-  /// Final rendered body (AI-personalized copy) — store what was actually sent.
   toEmail           String?       @map("to_email")
+  /// Final rendered body (AI-personalized copy) — store what was actually sent.
   messageBody       String        @map("message_body")
   /// WhatsApp template name if a pre-approved template was used.
   templateName      String?       @map("template_name")
