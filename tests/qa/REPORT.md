@@ -99,8 +99,18 @@ python3 -m pytest -q tests
 
 C snapshots from the live run are in `apps/ai-agent/tests/snapshots/`; QA-level redacted records are in `tests/qa/snapshots/`.
 
+## D. AI Re-entry Guard & Message Queue Deduplication (Issue #11)
+
+Tests: `pnpm --filter @grabit/worker test`
+
+| Case | Expected | Actual | Result |
+|---|---|---|---|
+| D1 Continue with pre-existing `agent_decisions` | Skip `callAgent`, reuse stored decision, no duplicate decision row | Pre-seeded decision reused; status is not changed to fallback HITL; `agent_decisions` row count remains 1 | **PASS** |
+| D2 Retry after successful AI decision | AI HTTP called exactly once across initial call and retry; single decision row | Mock AI server received 1 request; second run reused stored decision without HTTP call; single decision row in DB | **PASS** |
+| D3 Message queue stable `jobId` & BullMQ deduplication | `jobId = stableUuid(message:${job.id}:${followUpCount})` and duplicate enqueue ignored by BullMQ | Message enqueued with deterministic `jobId`; second enqueue with same `jobId` does not create duplicate BullMQ job | **PASS** |
+
 ## Overall result
 
-- PASS: 21 cases
+- PASS: 24 cases
 - BLOCKED: 0 cases
 - FAIL: 0 cases

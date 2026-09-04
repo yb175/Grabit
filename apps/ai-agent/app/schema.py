@@ -14,8 +14,6 @@ class FailedPayment(BaseModel):
     failure_reason: str | None = None
     failure_source: str | None = None
     payment_method: PaymentMethod
-    customer_name: str | None = None
-    customer_phone: str | None = None
 
 class JobContext(BaseModel):
     model_config = ConfigDict(extra='forbid')

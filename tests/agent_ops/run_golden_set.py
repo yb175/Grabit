@@ -13,7 +13,7 @@ def req(job_id, pay_id, amount, method, code, reason, source='payment', follow_u
         'failed_payment': {
             'razorpay_payment_id': pay_id, 'amount': amount, 'currency': 'INR',
             'failure_code': code, 'failure_reason': reason, 'failure_source': source,
-            'payment_method': method, 'customer_name': 'Customer', 'customer_phone': '+919xxxxxxxxx',
+            'payment_method': method,
         },
         'job': {'follow_up_count': follow_ups, 'max_follow_ups': 2, 'status': 'pending'},
     }
