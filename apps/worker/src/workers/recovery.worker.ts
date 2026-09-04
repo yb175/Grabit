@@ -20,6 +20,8 @@ import {
   type ResolvedPaymentStatus,
   type StoppingRuleDecision,
   type StoppingRulesConfig,
+  paymentLinkService,
+  PaymentLinkService,
 } from '@grabit/core'
 import { QUEUES, getQueue } from '@grabit/queue'
 
@@ -68,6 +70,8 @@ export interface RecoveryJobData {
   preferSalaryWindow?: boolean
   config?: Partial<StoppingRulesConfig>
   paymentStatusResolver?: (razorpayPaymentId: string) => Promise<ResolvedPaymentStatus>
+  paymentLinkService?: PaymentLinkService
+  agentOverride?: AgentResponse
 }
 
 export interface RecoveryProcessResult {
@@ -401,18 +405,70 @@ export async function processRecoveryJob(
         }),
       ])
       let agent: AgentResponse
-      try {
-        agent = await callAgent(job)
-      } catch (error) {
-        // Bounded TS fallback: the worker must never crash because the agent is down.
-        agent = {
-          decision_type: 'escalate_hitl', failure_type: job.failureType,
-          explanation: `AI unavailable: ${error instanceof Error ? error.message : 'unknown error'}`,
-          customer_message: '', action_payload: {}, confidence: 0, model_version: 'fallback',
-          should_escalate_hitl: true, taxonomy_match: job.failedPayment.failureCode,
-          tools_used: [],
+      if (data.agentOverride) {
+        agent = data.agentOverride
+      } else {
+        try {
+          agent = await callAgent(job)
+        } catch (error) {
+          // Bounded TS fallback: the worker must never crash because the agent is down.
+          agent = {
+            decision_type: 'escalate_hitl', failure_type: job.failureType,
+            explanation: `AI unavailable: ${error instanceof Error ? error.message : 'unknown error'}`,
+            customer_message: '', action_payload: {}, confidence: 0, model_version: 'fallback',
+            should_escalate_hitl: true, taxonomy_match: job.failedPayment.failureCode,
+            tools_used: [],
+          }
         }
       }
+
+      const linkService = data.paymentLinkService ?? paymentLinkService
+      let paymentLink: { id: string; shortUrl: string } | null = null
+
+      if (agent.decision_type === 'one_click') {
+        if (job.paymentLinkId && job.paymentLinkUrl) {
+          paymentLink = { id: job.paymentLinkId, shortUrl: job.paymentLinkUrl }
+        } else {
+          try {
+            const link = await linkService.create({
+              amount: job.failedPayment.amount,
+              currency: job.failedPayment.currency ?? 'INR',
+              referenceId: job.id,
+              description: job.failedPayment.failureReason ?? 'Payment recovery',
+              customer: {
+                name: job.failedPayment.customerName,
+                contact: job.failedPayment.customerPhone,
+                email: job.failedPayment.customerEmail,
+              },
+              notes: {
+                recovery_job_id: job.id,
+                failed_payment_id: job.failedPayment.id,
+              },
+            })
+            paymentLink = { id: link.id, shortUrl: link.shortUrl }
+            await prisma.recoveryJob.update({
+              where: { id: job.id },
+              data: {
+                paymentLinkId: link.id,
+                paymentLinkUrl: link.shortUrl,
+              },
+            })
+          } catch (err) {
+            console.error(`[recovery] failed to create payment link for job ${job.id}:`, err instanceof Error ? err.message : err)
+            const fallbackUrl = `https://example.test/pay/${job.id}`
+            const fallbackId = `plink_mock_${job.id}`
+            paymentLink = { id: fallbackId, shortUrl: fallbackUrl }
+            await prisma.recoveryJob.update({
+              where: { id: job.id },
+              data: {
+                paymentLinkId: fallbackId,
+                paymentLinkUrl: fallbackUrl,
+              },
+            })
+          }
+        }
+      }
+
       const decisionId = stableUuid(`agent-decision:${job.id}`)
       const actionPayload = {
         ...agent.action_payload,
@@ -420,6 +476,12 @@ export async function processRecoveryJob(
         taxonomy_match: agent.taxonomy_match,
         model_version: agent.model_version,
         tools_used: agent.tools_used,
+        ...(paymentLink
+          ? {
+              payment_link_id: paymentLink.id,
+              payment_link_url: paymentLink.shortUrl,
+            }
+          : {}),
       }
       await prisma.agentDecision.upsert({
         where: { id: decisionId },
@@ -432,7 +494,19 @@ export async function processRecoveryJob(
         update: {},
       })
       if (agent.decision_type === 'one_click' && agent.customer_message && job.failedPayment.customerPhone) {
-        await getQueue('message').add('send-recovery-message', { recoveryJobId: job.id, toPhone: job.failedPayment.customerPhone, messageBody: agent.customer_message })
+        await getQueue('message').add('send-recovery-message', {
+          recoveryJobId: job.id,
+          toPhone: job.failedPayment.customerPhone,
+          messageBody: agent.customer_message,
+          paymentLinkId: paymentLink?.id,
+          paymentLinkUrl: paymentLink?.shortUrl,
+          templateVars: {
+            1: job.failedPayment.customerName ?? 'Hi',
+            2: job.failedPayment.amount.toString(),
+            3: job.failedPayment.failureReason ?? 'Payment failed',
+            4: paymentLink?.shortUrl ?? `https://example.test/pay/${job.id}`,
+          },
+        })
       } else if (agent.decision_type === 'escalate_hitl' || agent.should_escalate_hitl) {
         const hitlTaskId = stableUuid(`hitl-task:${job.id}`)
         await prisma.hitlQueue.upsert({ where: { id: hitlTaskId }, create: { id: hitlTaskId, recoveryJobId: job.id, reason: agent.explanation, status: 'pending' }, update: {} })
