@@ -12,9 +12,11 @@
     "@grabit/core": "workspace:*",
     "@grabit/db": "workspace:*",
     "@grabit/queue": "workspace:*",
-    "bullmq": "^5.30.0"
+    "bullmq": "^5.30.0",
+    "nodemailer": "^9.1.1"
   },
   "devDependencies": {
+    "@types/nodemailer": "^8.0.1",
     "tsx": "^4.19.0"
   }
 }

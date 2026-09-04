@@ -7,6 +7,7 @@
 
 import { Hono } from 'hono'
 import { prisma, type HitlStatus } from '@grabit/db'
+import { config } from '@grabit/config'
 import { getQueue } from '@grabit/queue'
 
 const app = new Hono()
@@ -158,7 +159,65 @@ app.post('/:id/approve', async (c) => {
   const finalNotes = body.notes || task.notes
   const now = new Date()
 
-  const [updatedTask] = await prisma.$transaction([
+  // If decision had customer message (e.g. one_click) and a channel recipient
+  // exists, enqueue to the message queue BEFORE committing approval. If dispatch
+  // fails (BullMQ/Redis down), the approval is NOT committed and the task stays
+  // pending — the reviewer can retry. Committing first would permanently lose
+  // approved-but-undelivered outreach, because a later attempt short-circuits
+  // via alreadyProcessed. The deterministic jobId keeps retries duplicate-safe.
+  const latestDecision = task.recoveryJob.decisions[0]
+  const actionPayload = latestDecision?.actionPayload as Record<string, unknown> | null
+  const customerMessage =
+    body.messageBody ||
+    (typeof actionPayload?.customer_message === 'string' ? actionPayload.customer_message : '')
+
+  const payment = task.recoveryJob.failedPayment
+  // Channel-aware recipient: email channel needs customer_email, WhatsApp needs phone.
+  const recipient = config.messageChannel === 'email' ? payment?.customerEmail : payment?.customerPhone
+
+  let messageEnqueued = false
+  let enqueuedMessageJob: { remove(): Promise<void> } | null = null
+  if (recipient && customerMessage) {
+    try {
+      const messageQueue = getQueue('message')
+      enqueuedMessageJob = await messageQueue.add(
+        'send-recovery-message',
+        {
+          recoveryJobId: task.recoveryJobId,
+          followUpCount: task.recoveryJob.followUpCount,
+          toPhone: payment?.customerPhone ?? undefined,
+          toEmail: payment?.customerEmail ?? undefined,
+          messageBody: customerMessage,
+          paymentLinkId: typeof actionPayload?.payment_link_id === 'string' ? actionPayload.payment_link_id : undefined,
+          paymentLinkUrl: typeof actionPayload?.payment_link_url === 'string' ? actionPayload.payment_link_url : undefined,
+          templateVars: {
+            1: payment?.customerName ?? 'there',
+            2: `₹${payment?.amount?.toString() ?? ''}`,
+            3: payment?.razorpayOrderId ?? 'your order',
+            4: payment?.failureReason ?? 'the payment could not be processed',
+            5: 'try again using the payment link',
+          },
+        },
+        // Deterministic jobId: a retried approval re-enqueues the same job instead
+        // of sending the customer the same message twice.
+        { jobId: `hitl-approve-${task.recoveryJobId}` },
+      )
+      messageEnqueued = true
+    } catch (queueErr) {
+      console.error('[hitl] message dispatch failed; approval NOT committed:', queueErr)
+      return c.json(
+        {
+          error: 'dispatch_failed',
+          message: 'Message dispatch failed; approval not committed. Retry the request.',
+        },
+        502,
+      )
+    }
+  }
+
+  let updatedTask
+  try {
+    ;[updatedTask] = await prisma.$transaction([
     prisma.hitlQueue.update({
       where: { id: task.id },
       data: {
@@ -212,46 +271,17 @@ app.post('/:id/approve', async (c) => {
       },
     }),
   ])
-
-  // If decision had customer message (e.g. one_click) and phone exists, enqueue to
-  // the message queue BEFORE committing approval. If dispatch fails (BullMQ/Redis
-  // down), the approval is NOT committed and the task stays pending — the reviewer
-  // can retry. Committing first would permanently lose approved-but-undelivered
-  // outreach, because a later attempt short-circuits via alreadyProcessed.
-  const latestDecision = task.recoveryJob.decisions[0]
-  const actionPayload = latestDecision?.actionPayload as Record<string, unknown> | null
-  const customerMessage =
-    body.messageBody ||
-    (typeof actionPayload?.customer_message === 'string' ? actionPayload.customer_message : '')
-
-  const customerPhone = task.recoveryJob.failedPayment?.customerPhone
-
-  let messageEnqueued = false
-  if (customerPhone && customerMessage) {
-    try {
-      const messageQueue = getQueue('message')
-      await messageQueue.add(
-        'send-recovery-message',
-        {
-          recoveryJobId: task.recoveryJobId,
-          toPhone: customerPhone,
-          messageBody: customerMessage,
-        },
-        // Deterministic jobId: a retried approval re-enqueues the same job instead
-        // of sending the customer the same message twice.
-        { jobId: `hitl-approve-${task.recoveryJobId}` },
-      )
-      messageEnqueued = true
-    } catch (queueErr) {
-      console.error('[hitl] message dispatch failed; approval NOT committed:', queueErr)
-      return c.json(
-        {
-          error: 'dispatch_failed',
-          message: 'Message dispatch failed; approval not committed. Retry the request.',
-        },
-        502,
+  } catch (transactionError) {
+    // The queue already accepted the message job — remove it so a still-pending
+    // task never sends outreach. A retried approval re-enqueues the same
+    // deterministic jobId. If removal fails, the review stays pending and the
+    // worker-side message idempotency still prevents duplicate sends.
+    if (enqueuedMessageJob) {
+      await enqueuedMessageJob.remove().catch((removeErr) =>
+        console.error('[hitl] failed to remove queued message after approval rollback:', removeErr),
       )
     }
+    throw transactionError
   }
 
   return c.json({

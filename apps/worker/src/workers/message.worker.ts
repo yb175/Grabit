@@ -5,12 +5,42 @@ import { prisma } from '@grabit/db'
 import { config } from '@grabit/config'
 import { DEFAULT_STOPPING_RULES_CONFIG } from '@grabit/core'
 import { QUEUES } from '@grabit/queue'
+import nodemailer from 'nodemailer'
 import { stableUuid } from './recovery.worker.js'
+
+export type MessageChannel = 'mock' | 'email' | 'whatsapp'
+
+export interface RecoveryCopySlots {
+  name: string
+  amount: string
+  orderLabel: string
+  why: string
+  action: string
+  link?: string
+}
+
+export interface RenderedRecoveryCopy {
+  text: string
+  subject: string
+  html: string
+}
+
+export function renderRecoveryCopy(slots: RecoveryCopySlots): RenderedRecoveryCopy {
+  const text = `Hi ${slots.name},\nYour payment of ${slots.amount} for ${slots.orderLabel} could not be processed.\n\nWhy this happened: ${slots.why}\n\nWhat you can do: ${slots.action}\n\nUse Pay now to complete the same order.${slots.link ? `\n\nPay now: ${slots.link}` : ''}`
+  const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!)
+  const link = slots.link ? `<p><a href="${escapeHtml(slots.link)}">Pay now</a></p>` : ''
+  return {
+    text,
+    subject: `Your payment of ${slots.amount} for ${slots.orderLabel} could not be processed`,
+    html: `<p>Hi ${escapeHtml(slots.name)},</p><p>Your payment of ${escapeHtml(slots.amount)} for ${escapeHtml(slots.orderLabel)} could not be processed.</p><p><strong>Why this happened:</strong> ${escapeHtml(slots.why)}</p><p><strong>What you can do:</strong> ${escapeHtml(slots.action)}</p><p>Use Pay now to complete the same order.</p>${link}`,
+  }
+}
 
 export interface MessageJobData {
   recoveryJobId: string
   followUpCount?: number
-  toPhone: string
+  toPhone?: string
+  toEmail?: string
   messageBody: string
   paymentLinkId?: string
   paymentLinkUrl?: string
@@ -18,8 +48,11 @@ export interface MessageJobData {
 }
 
 export interface MessageProviderInput {
-  toPhone: string
+  toPhone?: string
+  toEmail?: string
   messageBody: string
+  subject?: string
+  htmlBody?: string
   templateName: string
   templateLang: string
   templateVars: Record<string, string>
@@ -30,15 +63,19 @@ export interface MessageProvider {
   send(input: MessageProviderInput): Promise<{ providerMessageId: string }>
 }
 
-const URL_RE = /https?:\/\/[^\s)]+/gi
+const URL_RE = /https?:\/\/[^\s)\">']+/gi
 
 function urls(value: string): string[] {
   return value.match(URL_RE) ?? []
 }
 
-function assertSafeContent(data: MessageJobData): void {
+function assertSafeContent(data: MessageJobData, canonicalBody: string, htmlBody?: string): void {
   const allowed = data.paymentLinkUrl
-  const found = [data.messageBody, ...Object.values(data.templateVars ?? {}).map(String)].flatMap(urls)
+  // HTML-escaped anchors contain &amp; — normalize before comparing.
+  const unescape = (value: string) => value.replace(/&amp;/g, '&')
+  const found = [canonicalBody, htmlBody ?? '', ...Object.values(data.templateVars ?? {}).map(String)]
+    .flatMap(urls)
+    .map(unescape)
   if (found.some((url) => url !== allowed)) {
     throw new Error('message contains an unexpected URL')
   }
@@ -94,6 +131,7 @@ export class WhatsAppCloudProvider implements MessageProvider {
       })
     }
 
+    if (!input.toPhone) throw new Error('customer phone is missing')
     const response = await (this.options.fetchFn ?? fetch)(
       `${(this.options.graphApiUrl ?? config.waGraphApiUrl).replace(/\/+$/, '')}/${phoneNumberId}/messages`,
       {
@@ -128,10 +166,63 @@ export class WhatsAppCloudProvider implements MessageProvider {
   }
 }
 
+export class GmailMessageProvider implements MessageProvider {
+  private readonly transporter: any
+
+  constructor(private readonly options: {
+    host?: string
+    port?: number
+    secure?: boolean
+    user?: string
+    pass?: string
+    from?: string
+    transport?: any
+  } = {}) {
+    if (options.transport) this.transporter = options.transport
+    else {
+      const user = options.user ?? config.smtpUser
+      const pass = options.pass ?? config.smtpPass
+      if (!user || !pass) throw new Error('Gmail SMTP is missing credentials')
+      this.transporter = nodemailer.createTransport({
+        host: options.host ?? config.smtpHost,
+        port: options.port ?? config.smtpPort,
+        secure: options.secure ?? config.smtpSecure,
+        // Cleartext credentials are never acceptable: when not using implicit
+        // TLS (port 465), force STARTTLS before authentication.
+        requireTLS: !(options.secure ?? config.smtpSecure),
+        auth: { user, pass },
+      })
+    }
+  }
+
+  async send(input: MessageProviderInput): Promise<{ providerMessageId: string }> {
+    if (!input.toEmail) throw new Error('customer email is missing')
+    const rendered = input.subject && input.htmlBody
+      ? { subject: input.subject, text: input.messageBody, html: input.htmlBody }
+      : renderRecoveryCopy({
+      name: input.templateVars['1'] ?? 'there',
+      amount: input.templateVars['2'] ?? '',
+      orderLabel: input.templateVars['3'] ?? 'your order',
+      why: input.templateVars['4'] ?? 'the payment could not be processed',
+      action: input.templateVars['5'] ?? 'try again using the payment link',
+      link: input.paymentLinkUrl,
+    })
+    const result = await this.transporter.sendMail({
+      from: this.options.from ?? config.mailFrom ?? this.options.user,
+      to: input.toEmail,
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
+    })
+    return { providerMessageId: String(result.messageId ?? result.response ?? `smtp:${input.toEmail}`) }
+  }
+}
+
 function providerFor(messageId: string): MessageProvider {
-  if (config.waProvider === 'mock') return new MockMessageProvider(messageId)
-  if (config.waProvider === 'whatsapp_cloud') return new WhatsAppCloudProvider()
-  throw new Error(`Unsupported WA_PROVIDER: ${config.waProvider}`)
+  if (config.messageChannel === 'mock') return new MockMessageProvider(messageId)
+  if (config.messageChannel === 'email') return new GmailMessageProvider()
+  if (config.messageChannel === 'whatsapp') return new WhatsAppCloudProvider()
+  throw new Error(`Unsupported MESSAGE_CHANNEL: ${config.messageChannel}`)
 }
 
 export async function processMessage(
@@ -146,65 +237,164 @@ export async function processMessage(
   const messageId = stableUuid(`message:${job.id}:${attempt}`)
   const existing = await prisma.message.findUnique({ where: { id: messageId } })
   if (existing?.status === 'sent' || existing?.status === 'delivered' || existing?.status === 'read') {
+    // The provider already accepted this message. Repair any partially
+    // reconciled state (e.g. follow-up bump lost in a previous crash) before
+    // returning, so the pipeline never stalls or re-sends.
+    if (existing.status === 'sent' && job.followUpCount === attempt) {
+      const gapHours = (attempt + 1) === 1
+        ? DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours
+        : DEFAULT_STOPPING_RULES_CONFIG.followUp2GapHours
+      try {
+        await prisma.recoveryJob.updateMany({
+          where: { id: job.id, followUpCount: attempt },
+          data: {
+            followUpCount: attempt + 1,
+            nextAttemptAt: new Date(now.getTime() + gapHours * 60 * 60 * 1000),
+          },
+        })
+        await prisma.auditLog.upsert({
+          where: { id: stableUuid(`audit:message_sent:${existing.id}`) },
+          create: {
+            id: stableUuid(`audit:message_sent:${existing.id}`),
+            entityType: 'messages',
+            entityId: existing.id,
+            action: 'message_sent',
+            oldValue: { status: 'queued' },
+            newValue: { status: 'sent', providerMessageId: existing.providerMessageId },
+            performedBy: 'message_worker',
+          },
+          update: {},
+        })
+      } catch (reconcileError) {
+        // Reconcile failure must not be swallowed: BullMQ retries the job and
+        // this duplicate path retries the reconcile until it lands.
+        throw reconcileError
+      }
+    }
     return { outcome: 'duplicate' as const, recoveryJobId: job.id, messageId }
   }
+
+  const channel = config.messageChannel as MessageChannel
+  if (!['mock', 'email', 'whatsapp'].includes(channel)) throw new Error(`Unsupported MESSAGE_CHANNEL: ${config.messageChannel}`)
+  if (channel === 'email' && !data.toEmail) throw new Error('customer email is missing')
+  if (channel === 'whatsapp' && !data.toPhone) throw new Error('customer phone is missing')
+  if (channel === 'email' && (!data.paymentLinkUrl || data.paymentLinkUrl.includes('example.test'))) {
+    throw new Error('email requires a real payment link')
+  }
+
+  // Render the canonical copy once and persist exactly what the customer receives.
+  const rendered = channel === 'email'
+    ? renderRecoveryCopy({
+        name: String(data.templateVars?.[1] ?? 'there'),
+        amount: String(data.templateVars?.[2] ?? ''),
+        orderLabel: String(data.templateVars?.[3] ?? 'your order'),
+        why: String(data.templateVars?.[4] ?? 'the payment could not be processed'),
+        action: String(data.templateVars?.[5] ?? 'try again using the payment link'),
+        link: data.paymentLinkUrl,
+      })
+    : undefined
+  const canonicalBody = rendered?.text ?? data.messageBody
 
   const message = existing ?? await prisma.message.create({
     data: {
       id: messageId,
       recoveryJobId: job.id,
-      channel: 'whatsapp',
+      channel,
       toPhone: data.toPhone,
-      messageBody: data.messageBody,
-      templateName: config.waTemplateName,
+      toEmail: data.toEmail,
+      messageBody: canonicalBody,
+      templateName: channel === 'whatsapp' ? config.waTemplateName : null,
       status: 'queued',
     },
   })
+  // If a previous attempt stored a non-canonical body, keep the record accurate.
+  if (existing && existing.messageBody !== canonicalBody) {
+    await prisma.message.update({ where: { id: message.id }, data: { messageBody: canonicalBody } })
+  }
 
   try {
-    assertSafeContent(data)
-    const result = await (provider ?? providerFor(message.id)).send({
+    assertSafeContent(data, canonicalBody, rendered?.html)
+  } catch (error) {
+    await prisma.message.update({
+      where: { id: message.id },
+      data: { status: 'failed', errorMessage: error instanceof Error ? error.message : 'validation failed' },
+    })
+    throw error
+  }
+
+  // Provider construction (e.g. missing SMTP credentials) fails before any
+  // submission — safe to mark failed and let BullMQ retry with bookkeeping.
+  let providerInstance: MessageProvider
+  let result: { providerMessageId: string }
+  try {
+    providerInstance = provider ?? providerFor(message.id)
+    result = await providerInstance.send({
       toPhone: data.toPhone,
-      messageBody: data.messageBody,
+      toEmail: data.toEmail,
+      messageBody: canonicalBody,
+      subject: rendered?.subject,
+      htmlBody: rendered?.html,
       templateName: config.waTemplateName,
       templateLang: config.waTemplateLang,
       templateVars: templateVars(data),
       paymentLinkUrl: data.paymentLinkUrl,
     })
-    const nextFollowUpCount = job.followUpCount + 1
-    const gapHours = nextFollowUpCount === 1
-      ? DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours
-      : DEFAULT_STOPPING_RULES_CONFIG.followUp2GapHours
-
-    await prisma.$transaction([
-      prisma.message.update({
-        where: { id: message.id },
-        data: { status: 'sent', providerMessageId: result.providerMessageId, sentAt: now, errorMessage: null },
-      }),
-      prisma.recoveryJob.updateMany({
-        where: { id: job.id, followUpCount: attempt },
-        data: {
-          followUpCount: nextFollowUpCount,
-          nextAttemptAt: new Date(now.getTime() + gapHours * 60 * 60 * 1000),
-        },
-      }),
-      prisma.auditLog.create({
-        data: {
-          entityType: 'messages',
-          entityId: message.id,
-          action: 'message_sent',
-          oldValue: { status: 'queued' },
-          newValue: { status: 'sent', providerMessageId: result.providerMessageId },
-          performedBy: 'message_worker',
-        },
-      }),
-    ])
-    return { outcome: 'sent' as const, recoveryJobId: job.id, messageId, providerMessageId: result.providerMessageId }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'message provider failed'
     await prisma.message.update({ where: { id: message.id }, data: { status: 'failed', errorMessage } })
     throw error
   }
+
+  // The provider has ACCEPTED the message. From here on the message must never
+  // be marked failed: a retry would see a non-sent row and re-send the same
+  // message to the customer. Persist with idempotent reconcile writes instead.
+  const auditId = stableUuid(`audit:message_sent:${message.id}`)
+  const nextFollowUpCount = attempt + 1
+  const gapHours = nextFollowUpCount === 1
+    ? DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours
+    : DEFAULT_STOPPING_RULES_CONFIG.followUp2GapHours
+
+  const markSent = () => prisma.message.update({
+    where: { id: message.id },
+    data: { status: 'sent', providerMessageId: result.providerMessageId, sentAt: now, errorMessage: null },
+  })
+  const bumpJob = () => prisma.recoveryJob.updateMany({
+    where: { id: job.id, followUpCount: attempt },
+    data: {
+      followUpCount: nextFollowUpCount,
+      nextAttemptAt: new Date(now.getTime() + gapHours * 60 * 60 * 1000),
+    },
+  })
+  const writeAudit = () => prisma.auditLog.upsert({
+    where: { id: auditId },
+    create: {
+      id: auditId,
+      entityType: 'messages',
+      entityId: message.id,
+      action: 'message_sent',
+      oldValue: { status: 'queued' },
+      newValue: { status: 'sent', providerMessageId: result.providerMessageId },
+      performedBy: 'message_worker',
+    },
+    update: {},
+  })
+
+  try {
+    await prisma.$transaction([markSent(), bumpJob(), writeAudit()])
+  } catch (transactionError) {
+    // Best-effort idempotent reconcile. A later replay of this job hits the
+    // `sent` duplicate check and never re-sends.
+    try {
+      await markSent()
+      await bumpJob()
+      await writeAudit()
+    } catch (reconcileError) {
+      throw transactionError
+    }
+    console.warn(`[message] transaction failed but send was reconciled for ${message.id}:`,
+      transactionError instanceof Error ? transactionError.message : transactionError)
+  }
+  return { outcome: 'sent' as const, recoveryJobId: job.id, messageId, providerMessageId: result.providerMessageId }
 }
 
 export function startMessageWorker(): Worker<MessageJobData> {
