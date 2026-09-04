@@ -213,7 +213,11 @@ app.post('/:id/approve', async (c) => {
     }),
   ])
 
-  // If decision had customer message (e.g. one_click) and phone exists, enqueue to message queue
+  // If decision had customer message (e.g. one_click) and phone exists, enqueue to
+  // the message queue BEFORE committing approval. If dispatch fails (BullMQ/Redis
+  // down), the approval is NOT committed and the task stays pending — the reviewer
+  // can retry. Committing first would permanently lose approved-but-undelivered
+  // outreach, because a later attempt short-circuits via alreadyProcessed.
   const latestDecision = task.recoveryJob.decisions[0]
   const actionPayload = latestDecision?.actionPayload as Record<string, unknown> | null
   const customerMessage =
@@ -226,14 +230,27 @@ app.post('/:id/approve', async (c) => {
   if (customerPhone && customerMessage) {
     try {
       const messageQueue = getQueue('message')
-      await messageQueue.add('send-recovery-message', {
-        recoveryJobId: task.recoveryJobId,
-        toPhone: customerPhone,
-        messageBody: customerMessage,
-      })
+      await messageQueue.add(
+        'send-recovery-message',
+        {
+          recoveryJobId: task.recoveryJobId,
+          toPhone: customerPhone,
+          messageBody: customerMessage,
+        },
+        // Deterministic jobId: a retried approval re-enqueues the same job instead
+        // of sending the customer the same message twice.
+        { jobId: `hitl-approve-${task.recoveryJobId}` },
+      )
       messageEnqueued = true
     } catch (queueErr) {
-      console.error('[hitl] message queue enqueue skipped/failed:', queueErr)
+      console.error('[hitl] message dispatch failed; approval NOT committed:', queueErr)
+      return c.json(
+        {
+          error: 'dispatch_failed',
+          message: 'Message dispatch failed; approval not committed. Retry the request.',
+        },
+        502,
+      )
     }
   }
 
