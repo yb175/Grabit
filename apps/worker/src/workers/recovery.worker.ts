@@ -20,6 +20,8 @@ import {
   type ResolvedPaymentStatus,
   type StoppingRuleDecision,
   type StoppingRulesConfig,
+  paymentLinkService,
+  PaymentLinkService,
 } from '@grabit/core'
 import { QUEUES, getQueue } from '@grabit/queue'
 
@@ -113,6 +115,8 @@ export interface RecoveryJobData {
   preferSalaryWindow?: boolean
   config?: Partial<StoppingRulesConfig>
   paymentStatusResolver?: (razorpayPaymentId: string) => Promise<ResolvedPaymentStatus>
+  paymentLinkService?: PaymentLinkService
+  agentOverride?: AgentResponse
 }
 
 export interface RecoveryProcessResult {
@@ -458,8 +462,11 @@ export async function processRecoveryJob(
         job.decisions?.[0] ??
         (await prisma.agentDecision.findUnique({ where: { id: decisionId } }))
       let agent: AgentResponse
+      let shouldPersistDecision = true
 
-      if (existingDecision && existingDecision.modelVersion !== 'in_progress') {
+      if (data.agentOverride) {
+        agent = data.agentOverride
+      } else if (existingDecision && existingDecision.modelVersion !== 'in_progress') {
         const payload = (existingDecision.actionPayload as Record<string, unknown>) ?? {}
         agent = {
           decision_type: existingDecision.decisionType as AgentResponse['decision_type'],
@@ -475,6 +482,9 @@ export async function processRecoveryJob(
           tools_used: Array.isArray(payload.tools_used) ? (payload.tools_used as string[]) : [],
         }
       } else {
+        // Atomic claim: worker runs with concurrency 5, so two deliveries may
+        // both see no stored decision. Exactly one wins the claim row and
+        // calls the AI; the others wait and reuse that decision.
         let isOwner = false
         if (!existingDecision) {
           try {
@@ -517,47 +527,9 @@ export async function processRecoveryJob(
               tools_used: [],
             }
           }
-          const actionPayload = {
-            ...agent.action_payload,
-            customer_message: agent.customer_message,
-            taxonomy_match: agent.taxonomy_match,
-            model_version: agent.model_version,
-            tools_used: agent.tools_used,
-            should_escalate_hitl: agent.should_escalate_hitl,
-          }
-          await prisma.agentDecision.upsert({
-            where: { id: decisionId },
-            create: {
-              id: decisionId,
-              recoveryJobId: job.id,
-              decisionType: agent.decision_type,
-              explanation: agent.explanation,
-              actionPayload,
-              confidence: agent.confidence,
-              modelVersion: agent.model_version,
-            },
-            update: {
-              decisionType: agent.decision_type,
-              explanation: agent.explanation,
-              actionPayload,
-              confidence: agent.confidence,
-              modelVersion: agent.model_version,
-            },
-          })
-          await prisma.auditLog.upsert({
-            where: { id: stableUuid(`audit:agent_decision:${job.id}`) },
-            create: {
-              id: stableUuid(`audit:agent_decision:${job.id}`),
-              entityType: 'recovery_jobs',
-              entityId: job.id,
-              action: 'agent_decision',
-              oldValue: {},
-              newValue: actionPayload,
-              performedBy: 'agent',
-            },
-            update: {},
-          })
         } else {
+          // Lost the claim: wait for the owner's decision, then reuse it.
+          shouldPersistDecision = false
           let finalDecision = await prisma.agentDecision.findUnique({ where: { id: decisionId } })
           const startWait = Date.now()
           while (finalDecision?.modelVersion === 'in_progress' && Date.now() - startWait < 10_000) {
@@ -579,8 +551,94 @@ export async function processRecoveryJob(
             tools_used: Array.isArray(payload.tools_used) ? (payload.tools_used as string[]) : [],
           }
         }
+
       }
 
+      const linkService = data.paymentLinkService ?? paymentLinkService
+      let paymentLink: { id: string; shortUrl: string } | null = null
+
+      if (agent.decision_type === 'one_click') {
+        if (job.paymentLinkId && job.paymentLinkUrl) {
+          paymentLink = { id: job.paymentLinkId, shortUrl: job.paymentLinkUrl }
+        } else {
+          // Mock links come from PaymentLinkService itself when Razorpay is
+          // disabled/unconfigured. Any real API or persistence failure here
+          // propagates so the recovery job is retried — never replaced with a
+          // non-checkout example.test URL sent to a customer.
+          const link = await linkService.create({
+            amount: job.failedPayment.amount,
+            currency: job.failedPayment.currency ?? 'INR',
+            referenceId: job.id,
+            description: job.failedPayment.failureReason ?? 'Payment recovery',
+            customer: {
+              name: job.failedPayment.customerName,
+              contact: job.failedPayment.customerPhone,
+              email: job.failedPayment.customerEmail,
+            },
+            notes: {
+              recovery_job_id: job.id,
+              failed_payment_id: job.failedPayment.id,
+            },
+          })
+          paymentLink = { id: link.id, shortUrl: link.shortUrl }
+          await prisma.recoveryJob.update({
+            where: { id: job.id },
+            data: {
+              paymentLinkId: link.id,
+              paymentLinkUrl: link.shortUrl,
+            },
+          })
+        }
+      }
+
+      if (shouldPersistDecision) {
+      const finalActionPayload = {
+        ...agent.action_payload,
+        customer_message: agent.customer_message,
+        taxonomy_match: agent.taxonomy_match,
+        model_version: agent.model_version,
+        tools_used: agent.tools_used,
+        should_escalate_hitl: agent.should_escalate_hitl,
+        ...(paymentLink
+          ? {
+              payment_link_id: paymentLink.id,
+              payment_link_url: paymentLink.shortUrl,
+            }
+          : {}),
+      }
+      await prisma.agentDecision.upsert({
+        where: { id: decisionId },
+        create: {
+          id: decisionId,
+          recoveryJobId: job.id,
+          decisionType: agent.decision_type,
+          explanation: agent.explanation,
+          actionPayload: finalActionPayload,
+          confidence: agent.confidence,
+          modelVersion: agent.model_version,
+        },
+        update: {
+          decisionType: agent.decision_type,
+          explanation: agent.explanation,
+          actionPayload: finalActionPayload,
+          confidence: agent.confidence,
+          modelVersion: agent.model_version,
+        },
+      })
+      await prisma.auditLog.upsert({
+        where: { id: stableUuid(`audit:agent_decision:${job.id}`) },
+        create: {
+          id: stableUuid(`audit:agent_decision:${job.id}`),
+          entityType: 'recovery_jobs',
+          entityId: job.id,
+          action: 'agent_decision',
+          oldValue: {},
+          newValue: finalActionPayload,
+          performedBy: 'agent',
+        },
+        update: {},
+      })
+      }
       if (agent.decision_type === 'one_click' && agent.customer_message && job.failedPayment.customerPhone) {
         await getQueue('message').add(
           'send-recovery-message',
@@ -588,11 +646,20 @@ export async function processRecoveryJob(
             recoveryJobId: job.id,
             toPhone: job.failedPayment.customerPhone,
             messageBody: agent.customer_message,
+            paymentLinkId: paymentLink?.id,
+            paymentLinkUrl: paymentLink?.shortUrl,
+            templateVars: {
+              1: job.failedPayment.customerName ?? 'Hi',
+              2: job.failedPayment.amount.toString(),
+              3: job.failedPayment.failureReason ?? 'Payment failed',
+              4: paymentLink?.shortUrl ?? `https://example.test/pay/${job.id}`,
+            },
           },
           {
             jobId: stableUuid(`message:${job.id}:${job.followUpCount}`),
           },
         )
+
       } else if (agent.decision_type === 'escalate_hitl' || agent.should_escalate_hitl) {
         const hitlTaskId = stableUuid(`hitl-task:${job.id}`)
         await prisma.hitlQueue.upsert({

@@ -21,7 +21,9 @@ export const config = {
   // Razorpay webhook signing secret (Dashboard -> Settings -> Webhooks).
   // Optional at boot: verification fails closed when unset.
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+  // Razorpay API keys & settings
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
   razorpayApiUrl: process.env.RAZORPAY_API_URL ?? 'https://api.razorpay.com',
+  razorpayPaymentLinkEnabled: process.env.RAZORPAY_PAYMENT_LINK_ENABLED === 'true',
 }

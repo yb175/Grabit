@@ -65,6 +65,10 @@ importers:
   packages/config: {}
 
   packages/core:
+    dependencies:
+      '@grabit/config':
+        specifier: workspace:*
+        version: link:../config
     devDependencies:
       tsx:
         specifier: ^4.19.0

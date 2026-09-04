@@ -162,6 +162,10 @@ model RecoveryJob {
   assignedTo      String?           @map("assigned_to")
   /// Last pipeline error — for debugging stuck jobs.
   lastError       String?           @map("last_error")
+  /// Razorpay Payment Link ID created for one-click recovery.
+  paymentLinkId   String?           @map("payment_link_id")
+  /// Razorpay Payment Link short URL for customer checkout.
+  paymentLinkUrl  String?           @map("payment_link_url")
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -175,6 +179,7 @@ model RecoveryJob {
   @@index([failureType])
   @@index([createdAt])
   @@index([assignedTo])
+  @@index([paymentLinkId])
   @@map("recovery_jobs")
 }
 

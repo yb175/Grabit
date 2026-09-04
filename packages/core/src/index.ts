@@ -24,3 +24,7 @@ export * from './razorpay.js'
 // Stopping Rules & Smart-Timing Engine
 export * from './stopping-rules.js'
 
+// Razorpay Payment Link Service
+export * from './payment-link.js'
+
+
