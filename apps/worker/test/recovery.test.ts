@@ -11,6 +11,7 @@ import { config } from '@grabit/config'
 import { fromISTComponents, toISTComponents, PaymentLinkService } from '@grabit/core'
 import { getQueue, closeAllQueues } from '@grabit/queue'
 import { processRecoveryJob, stableUuid, buildAgentPayload } from '../src/workers/recovery.worker.js'
+import { processIngestEvent } from '../src/workers/ingest.worker.js'
 
 const originalMessageChannel = config.messageChannel
 config.messageChannel = 'mock'
@@ -495,6 +496,91 @@ test('queue: two enqueue attempts with same deterministic jobId creates only one
   assert.equal(fetched.data.attempt, 1)
 
   await fetched.remove()
+})
+
+test('e2e: failed -> payment.captured/order.paid -> recovery stops before AI, single ledger row, no message', async () => {
+  for (const successEvent of ['payment.captured', 'order.paid'] as const) {
+    const id = uniqPaymentId()
+
+    // 1. Original failure arrives
+    const failResult = await processIngestEvent({
+      event: 'payment.failed',
+      payload: {
+        payment: {
+          entity: {
+            id,
+            order_id: `order_${id}`,
+            amount: 100000, // paise -> ₹1000
+            currency: 'INR',
+            method: 'upi',
+            error_code: 'insufficient_funds',
+            error_description: 'Insufficient funds in the account',
+            contact: '+919876543210',
+            email: 'customer@example.com',
+            notes: null,
+          },
+        },
+      },
+      receivedAt: new Date().toISOString(),
+    })
+    assert.equal(failResult.outcome, 'created')
+
+    // 2. Later capture/success event for the same payment id
+    const cap1 = await processIngestEvent({
+      event: successEvent,
+      payload: {
+        payment: {
+          entity: { id, amount: 100000, status: 'captured' },
+        },
+      },
+      receivedAt: new Date().toISOString(),
+    })
+    assert.equal(cap1.outcome, 'updated')
+    assert.equal(cap1.recoveryJobId, failResult.recoveryJobId)
+
+    // 3. Duplicate capture is idempotent — no new state
+    const cap2 = await processIngestEvent({
+      event: successEvent,
+      payload: {
+        payment: {
+          entity: { id, amount: 100000, status: 'captured' },
+        },
+      },
+      receivedAt: new Date().toISOString(),
+    })
+    assert.equal(cap2.outcome, 'duplicate')
+
+    // 4. Recovery worker evaluates the open job: isPaid=true -> stop_recovered
+    const daytime = fromISTComponents(2025, 5, 10, 11, 0, 0)
+    const result = await processRecoveryJob({ recoveryJobId: cap1.recoveryJobId! }, daytime)
+    assert.equal(result.outcome, 'completed')
+    assert.equal(result.decision?.action, 'stop_recovered')
+    assert.equal(result.decision?.rule, 'already_recovered')
+    assert.equal(result.decision?.shouldCallAi, false)
+
+    const job = await prisma.recoveryJob.findUniqueOrThrow({ where: { id: cap1.recoveryJobId! } })
+    assert.equal(job.status, 'recovered')
+
+    // Ledger written exactly once, in rupees
+    const ledger = await prisma.recoveryLedger.findMany({ where: { recoveryJobId: job.id } })
+    assert.equal(ledger.length, 1)
+    assert.equal(ledger[0].status, 'recovered')
+    assert.equal(ledger[0].amount.toString(), '1000')
+    assert.ok(ledger[0].recoveredAt)
+
+    // No AI decision, no message enqueued, no message row
+    const decisions = await prisma.agentDecision.findMany({ where: { recoveryJobId: job.id } })
+    assert.equal(decisions.length, 0)
+    const msgQueue = getQueue('message')
+    assert.equal(await msgQueue.getJob(stableUuid(`message:${job.id}:${job.followUpCount}`)), undefined)
+    assert.equal(await prisma.message.count({ where: { recoveryJobId: job.id } }), 0)
+
+    // 5. Re-evaluation (e.g. queued duplicate) keeps exactly one ledger row
+    const again = await processRecoveryJob({ recoveryJobId: job.id }, daytime)
+    assert.equal(again.decision?.action, 'stop_recovered')
+    const ledgerAgain = await prisma.recoveryLedger.findMany({ where: { recoveryJobId: job.id } })
+    assert.equal(ledgerAgain.length, 1)
+  }
 })
 
 test('recovery: buildAgentPayload strips customer PII (phone, email, full name)', () => {
