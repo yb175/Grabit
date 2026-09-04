@@ -1,0 +1,23 @@
+{
+  "case": "03_soft_upi_debit_failed",
+  "description": "Soft UPI failure due to transient network debit glitch",
+  "event": "payment.failed",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_03_<unique>",
+        "order_id": "order_batch_03",
+        "amount": 79900,
+        "currency": "INR",
+        "method": "upi",
+        "error_code": "debit_failed",
+        "error_description": "Temporary debit failure, please retry",
+        "contact": "+919876543212",
+        "email": "amit@example.com",
+        "notes": {
+          "customer_name": "Amit Kumar"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "case": "04_soft_netbanking_timeout",
+  "description": "Soft Netbanking failure during gateway redirect",
+  "event": "payment.failed",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_04_<unique>",
+        "order_id": "order_batch_04",
+        "amount": 499900,
+        "currency": "INR",
+        "method": "netbanking",
+        "error_code": "gateway_timeout",
+        "error_description": "Payment gateway timeout during netbanking redirect",
+        "contact": "+919876543213",
+        "email": "sunita@example.com",
+        "notes": {
+          "customer_name": "Sunita Verma"
+        }
+      }
+    }
+  }
+}

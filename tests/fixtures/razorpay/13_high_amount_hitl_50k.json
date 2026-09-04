@@ -1,0 +1,23 @@
+{
+  "case": "13_high_amount_hitl_50k",
+  "description": "High-value enterprise failure (₹50,000) requiring HITL human review",
+  "event": "payment.failed",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_13_<unique>",
+        "order_id": "order_batch_13",
+        "amount": 5000000,
+        "currency": "INR",
+        "method": "upi",
+        "error_code": "insufficient_funds",
+        "error_description": "High value payment balance insufficient",
+        "contact": "+919876543222",
+        "email": "enterprise@example.com",
+        "notes": {
+          "customer_name": "Infosys Corp"
+        }
+      }
+    }
+  }
+}

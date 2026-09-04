@@ -1,0 +1,33 @@
+{
+  "case": "10_autopay_subscription_halted",
+  "description": "Autopay recurring subscription halted after debit attempts",
+  "event": "subscription.halted",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_10_<unique>",
+        "order_id": "order_batch_10",
+        "amount": 199900,
+        "currency": "INR",
+        "method": "emandate",
+        "error_code": "emandate_execution_failed",
+        "error_description": "Emandate debit failed due to temporary switch error, mandate active",
+        "contact": "+919876543219",
+        "email": "ananya@example.com",
+        "notes": {
+          "customer_name": "Ananya Sen"
+        }
+      }
+    },
+    "subscription": {
+      "entity": {
+        "id": "sub_batch_10_<unique>",
+        "payment_id": "pay_batch_10_<unique>",
+        "customer_id": "cust_batch_10",
+        "notes": {
+          "customer_name": "Ananya Sen"
+        }
+      }
+    }
+  }
+}

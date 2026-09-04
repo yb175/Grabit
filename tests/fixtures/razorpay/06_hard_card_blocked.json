@@ -1,0 +1,23 @@
+{
+  "case": "06_hard_card_blocked",
+  "description": "Hard Card failure - card permanently blocked",
+  "event": "payment.failed",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_06_<unique>",
+        "order_id": "order_batch_06",
+        "amount": 120000,
+        "currency": "INR",
+        "method": "card",
+        "error_code": "card_blocked",
+        "error_description": "Card blocked by issuing bank",
+        "contact": "+919876543215",
+        "email": "kavita@example.com",
+        "notes": {
+          "customer_name": "Kavita Rao"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "case": "09_autopay_execution_failed",
+  "description": "Autopay execution failed on active UPI mandate",
+  "event": "subscription.halted",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_09_<unique>",
+        "order_id": "order_batch_09",
+        "amount": 99900,
+        "currency": "INR",
+        "method": "emandate",
+        "error_code": "emandate_execution_failed",
+        "error_description": "UPI Autopay execution failed, mandate still active",
+        "contact": "+919876543218",
+        "email": "sanjay@example.com",
+        "notes": {
+          "customer_name": "Sanjay Nair"
+        }
+      }
+    },
+    "subscription": {
+      "entity": {
+        "id": "sub_batch_09_<unique>",
+        "payment_id": "pay_batch_09_<unique>",
+        "customer_id": "cust_batch_09",
+        "notes": {
+          "customer_name": "Sanjay Nair"
+        }
+      }
+    }
+  }
+}

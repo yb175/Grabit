@@ -1,0 +1,29 @@
+{
+  "case": "11_autopay_mandate_cancelled",
+  "description": "Autopay cancelled by customer in banking app",
+  "event": "mandate.revoked",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_11_<unique>",
+        "order_id": "order_batch_11",
+        "amount": 49900,
+        "currency": "INR",
+        "method": "emandate",
+        "error_code": "mandate_cancelled",
+        "error_description": "Customer cancelled the autopay mandate",
+        "contact": "+919876543220",
+        "email": "karthik@example.com",
+        "notes": {
+          "customer_name": "Karthik Reddy"
+        }
+      }
+    },
+    "mandate": {
+      "entity": {
+        "id": "man_batch_11_<unique>",
+        "status": "cancelled"
+      }
+    }
+  }
+}

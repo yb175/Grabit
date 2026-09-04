@@ -1,0 +1,23 @@
+{
+  "case": "02_soft_card_issuer_unavailable",
+  "description": "Soft Card failure due to temporary bank issuer downtime",
+  "event": "payment.failed",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_02_<unique>",
+        "order_id": "order_batch_02",
+        "amount": 249900,
+        "currency": "INR",
+        "method": "card",
+        "error_code": "issuer_unavailable",
+        "error_description": "Bank issuer unavailable, timeout at issuer",
+        "contact": "+919876543211",
+        "email": "priya@example.com",
+        "notes": {
+          "customer_name": "Priya Patel"
+        }
+      }
+    }
+  }
+}

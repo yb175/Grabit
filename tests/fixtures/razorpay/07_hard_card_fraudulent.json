@@ -1,0 +1,23 @@
+{
+  "case": "07_hard_card_fraudulent",
+  "description": "Hard Card failure - suspected fraud flag",
+  "event": "payment.failed",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_07_<unique>",
+        "order_id": "order_batch_07",
+        "amount": 650000,
+        "currency": "INR",
+        "method": "card",
+        "error_code": "fraudulent",
+        "error_description": "Transaction flagged as fraudulent by fraud detection engine",
+        "contact": "+919876543216",
+        "email": "rajesh@example.com",
+        "notes": {
+          "customer_name": "Rajesh Gupta"
+        }
+      }
+    }
+  }
+}

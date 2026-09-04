@@ -1,0 +1,23 @@
+{
+  "case": "14_high_amount_hitl_15k",
+  "description": "High-value B2B SaaS failure (₹15,000) triggering human escalation",
+  "event": "payment.failed",
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_batch_14_<unique>",
+        "order_id": "order_batch_14",
+        "amount": 1500000,
+        "currency": "INR",
+        "method": "card",
+        "error_code": "temporary_decline",
+        "error_description": "Annual subscription payment temporary decline",
+        "contact": "+919876543223",
+        "email": "saas@example.com",
+        "notes": {
+          "customer_name": "TechStart Inc"
+        }
+      }
+    }
+  }
+}
