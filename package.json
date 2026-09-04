@@ -5,7 +5,7 @@
     "demo:batch": "tsx scripts/demo-batch/index.ts",
     "dev:api": "pnpm --filter @grabit/api dev",
     "dev:worker": "pnpm --filter @grabit/worker dev",
-    "test": "node --env-file=.env --import tsx --test tests/*.test.ts"
+    "test": "node --env-file-if-exists=.env --import tsx --test tests/*.test.ts"
   },
   "devDependencies": {
     "@grabit/config": "workspace:*",
