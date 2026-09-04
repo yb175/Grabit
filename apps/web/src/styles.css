@@ -1,0 +1,454 @@
+/* Grabit Command View — tokens from docs/design/screenshots/command-view.png
+   (issue #32): mono for money + IDs, Inter for labels/counts, restrained
+   green/grey/amber status pills, no chat widgets, no escaped underscores. */
+
+:root {
+  --bg: #f9fafb;
+  --surface: #ffffff;
+  --border: #e5e7eb;
+  --text: #111827;
+  --muted: #6b7280;
+  --faint: #9ca3af;
+  --brand: #0f172a;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --sans: 'Inter', system-ui, -apple-system, sans-serif;
+
+  --green: #15803d;
+  --green-bg: #dcfce7;
+  --grey: #374151;
+  --grey-bg: #f3f4f6;
+  --amber: #92400e;
+  --amber-bg: #fef3c7;
+  --blue: #1d4ed8;
+  --blue-bg: #dbeafe;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  background: var(--grey-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ------------------------------------------------ header */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 28px;
+  height: 56px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  color: var(--brand);
+}
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--green);
+  background: var(--green-bg);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.topbar-nav {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.nav-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 7px;
+}
+
+.nav-link:hover {
+  color: var(--text);
+  background: var(--grey-bg);
+}
+
+.nav-link.active {
+  color: var(--text);
+  background: var(--grey-bg);
+}
+
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.merchant-chip {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--muted);
+  background: var(--grey-bg);
+  padding: 5px 11px;
+  border-radius: 7px;
+  white-space: nowrap;
+}
+
+.merchant-chip .sep {
+  color: var(--faint);
+  margin: 0 5px;
+}
+
+/* ------------------------------------------------ content */
+
+.content {
+  flex: 1;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 28px;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.page-head h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.page-sub {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.poll-note {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.poll-ok {
+  color: var(--muted);
+}
+
+.poll-error {
+  color: #b45309;
+  background: var(--amber-bg);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+/* ------------------------------------------------ KPI cards */
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kpi-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.kpi-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  color: var(--amber);
+  background: var(--amber-bg);
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.kpi-value {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.kpi-value.mono {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-sub {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 24ch;
+}
+
+.kpi-tag {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 6px;
+  align-self: flex-start;
+}
+
+/* ------------------------------------------------ jobs table */
+
+.table-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.table-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.table-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.table-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.jobs-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.jobs-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: #fcfcfd;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.jobs-table th.num,
+.jobs-table td.num {
+  text-align: right;
+}
+
+.jobs-table td {
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.jobs-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.jobs-table tbody tr:hover {
+  background: #fcfcfd;
+}
+
+.id-cell {
+  color: var(--text);
+}
+
+.action-col {
+  width: 1%;
+  text-align: right;
+}
+
+.view-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.view-link:hover {
+  text-decoration: underline;
+}
+
+.empty-row td {
+  text-align: center;
+  color: var(--muted);
+  padding: 28px 18px;
+}
+
+/* status pills */
+
+.pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.pill.green {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+.pill.grey {
+  color: var(--grey);
+  background: var(--grey-bg);
+}
+
+.pill.amber {
+  color: var(--amber);
+  background: var(--amber-bg);
+}
+
+.pill.neutral {
+  color: var(--blue);
+  background: var(--blue-bg);
+}
+
+/* ------------------------------------------------ footer pipeline */
+
+.pipeline {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 16px 28px 20px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.pipeline-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pipeline-arrow {
+  color: var(--border-strong, #d1d5db);
+}
+
+@media (max-width: 720px) {
+  .topbar {
+    padding: 0 16px;
+    gap: 12px;
+  }
+  .merchant-chip {
+    font-size: 11px;
+  }
+  .content {
+    padding: 18px 16px;
+  }
+}

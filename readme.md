@@ -229,12 +229,14 @@ grabit/
 ├── apps/
 │   ├── api/            # Hono API
 │   ├── worker/         # BullMQ workers
+│   ├── web/            # Command View dashboard (Vite + React + TS)
 │   └── ai-agent/       # Python + Agno service
 ├── packages/
 │   ├── db/             # Prisma schema & client
 │   ├── queue/          # BullMQ helpers
 │   ├── core/           # Shared business logic
 │   └── config/
+├── scripts/            # demo:batch harness + db:seed
 ├── infra/
 └── docs/               # Architecture diagrams & screenshots
 ```
@@ -243,14 +245,8 @@ grabit/
 
 ## Screenshots & Demo
 
-<!-- 
-  Add screenshots / demo gifs here later
--->
-
-- Dashboard  
-- Recovery Ledger  
-- Sample recovery message  
-- HITL queue  
+- [Command View dashboard](./docs/design/screenshots/command-view.png) — live recovery KPIs + jobs table (`apps/web`, issue #32)
+- Recovery Ledger, sample recovery message, HITL queue — coming soon
 
 ---
 
@@ -294,11 +290,34 @@ DATABASE_URL="postgresql://grabit:grabit@localhost:5433/grabit" \
 
 (Or copy `.env.example` to `.env` and skip the inline `DATABASE_URL`.)
 
+### 3b. Seed demo data (optional, idempotent)
+
+```bash
+pnpm db:seed
+```
+
+Creates 4 representative recovery jobs (one-click recovered ₹1,499, a hard
+stopped case with no message, a high-value HITL pending case, and an active
+waiting follow-up) so an empty database shows meaningful dashboard numbers
+immediately. Uses deterministic IDs + upserts — re-running never duplicates
+rows. Refuses to run against a non-local `DATABASE_URL`.
+
 ### 4. Start the API
 
 ```bash
 DATABASE_URL="postgresql://grabit:grabit@localhost:5433/grabit" pnpm dev:api
 ```
+
+### 4b. Start the Command View dashboard (web)
+
+```bash
+pnpm --filter @grabit/web dev
+```
+
+Opens at http://localhost:5173. Reads the API at `VITE_API_URL` (default
+`http://localhost:3100`) and polls `/dashboard/summary` + `/jobs` every 3s
+while the tab is visible, so numbers move live after `pnpm demo:batch` or a
+`payment.captured` webhook — no refresh needed.
 
 ### 5. Test it
 

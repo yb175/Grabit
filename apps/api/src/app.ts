@@ -9,6 +9,7 @@
 //  - /audit/*    : audit trail of every automated decision
 // plus GET /health (below) used by docker-compose, k8s and humans.
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
 import { prisma } from '@grabit/db'
 import webhooks from './routes/webhooks.js'
 import jobs from './routes/jobs.js'
@@ -18,6 +19,10 @@ import ledger from './routes/ledger.js'
 import audit from './routes/audit.js'
 
 export const app = new Hono()
+
+// The web Command View (vite dev server / static build) reads /dashboard and
+// /jobs from a different origin — allow it.
+app.use('*', cors())
 
 // Health check: proves both the API and the Postgres connection are alive.
 app.get('/health', async (c) => {
