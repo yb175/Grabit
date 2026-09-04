@@ -12,7 +12,7 @@
 
 import { createHash } from 'node:crypto'
 import { Worker } from 'bullmq'
-import { prisma } from '@grabit/db'
+import { prisma, Prisma } from '@grabit/db'
 import { config } from '@grabit/config'
 import {
   evaluateStoppingRules,
@@ -76,7 +76,10 @@ export interface RecoveryProcessResult {
   decision?: StoppingRuleDecision
 }
 
-function stableUuid(key: string): string {
+/**
+ * Generate a deterministic UUID from a given key string.
+ */
+export function stableUuid(key: string): string {
   const bytes = createHash('sha1').update(key).digest()
   bytes[6] = (bytes[6] & 0x0f) | 0x50
   bytes[8] = (bytes[8] & 0x3f) | 0x80
@@ -109,6 +112,10 @@ export async function processRecoveryJob(
         take: 1,
       },
       hitlTasks: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      },
+      decisions: {
         orderBy: { createdAt: 'desc' },
         take: 1,
       },
@@ -400,44 +407,168 @@ export async function processRecoveryJob(
           update: {},
         }),
       ])
+
+      const decisionId = stableUuid(`agent-decision:${job.id}`)
+      const existingDecision =
+        job.decisions?.[0] ??
+        (await prisma.agentDecision.findUnique({ where: { id: decisionId } }))
       let agent: AgentResponse
-      try {
-        agent = await callAgent(job)
-      } catch (error) {
-        // Bounded TS fallback: the worker must never crash because the agent is down.
+
+      if (existingDecision && existingDecision.modelVersion !== 'in_progress') {
+        const payload = (existingDecision.actionPayload as Record<string, unknown>) ?? {}
         agent = {
-          decision_type: 'escalate_hitl', failure_type: job.failureType,
-          explanation: `AI unavailable: ${error instanceof Error ? error.message : 'unknown error'}`,
-          customer_message: '', action_payload: {}, confidence: 0, model_version: 'fallback',
-          should_escalate_hitl: true, taxonomy_match: job.failedPayment.failureCode,
-          tools_used: [],
+          decision_type: existingDecision.decisionType as AgentResponse['decision_type'],
+          failure_type: job.failureType,
+          explanation: existingDecision.explanation ?? '',
+          customer_message: typeof payload.customer_message === 'string' ? payload.customer_message : '',
+          action_payload: payload,
+          confidence: existingDecision.confidence ?? 0,
+          model_version: existingDecision.modelVersion ?? 'stored',
+          should_escalate_hitl:
+            Boolean(payload.should_escalate_hitl) || existingDecision.decisionType === 'escalate_hitl',
+          taxonomy_match: typeof payload.taxonomy_match === 'string' ? payload.taxonomy_match : null,
+          tools_used: Array.isArray(payload.tools_used) ? (payload.tools_used as string[]) : [],
+        }
+      } else {
+        let isOwner = false
+        if (!existingDecision) {
+          try {
+            await prisma.agentDecision.create({
+              data: {
+                id: decisionId,
+                recoveryJobId: job.id,
+                decisionType: 'escalate_hitl',
+                explanation: 'in_progress',
+                confidence: 0,
+                modelVersion: 'in_progress',
+                actionPayload: {},
+              },
+            })
+            isOwner = true
+          } catch (err) {
+            if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+              isOwner = false
+            } else {
+              throw err
+            }
+          }
+        }
+
+        if (isOwner) {
+          try {
+            agent = await callAgent(job)
+          } catch (error) {
+            // Bounded TS fallback: the worker must never crash because the agent is down.
+            agent = {
+              decision_type: 'escalate_hitl',
+              failure_type: job.failureType,
+              explanation: `AI unavailable: ${error instanceof Error ? error.message : 'unknown error'}`,
+              customer_message: '',
+              action_payload: {},
+              confidence: 0,
+              model_version: 'fallback',
+              should_escalate_hitl: true,
+              taxonomy_match: job.failedPayment.failureCode,
+              tools_used: [],
+            }
+          }
+          const actionPayload = {
+            ...agent.action_payload,
+            customer_message: agent.customer_message,
+            taxonomy_match: agent.taxonomy_match,
+            model_version: agent.model_version,
+            tools_used: agent.tools_used,
+            should_escalate_hitl: agent.should_escalate_hitl,
+          }
+          await prisma.agentDecision.upsert({
+            where: { id: decisionId },
+            create: {
+              id: decisionId,
+              recoveryJobId: job.id,
+              decisionType: agent.decision_type,
+              explanation: agent.explanation,
+              actionPayload,
+              confidence: agent.confidence,
+              modelVersion: agent.model_version,
+            },
+            update: {
+              decisionType: agent.decision_type,
+              explanation: agent.explanation,
+              actionPayload,
+              confidence: agent.confidence,
+              modelVersion: agent.model_version,
+            },
+          })
+          await prisma.auditLog.upsert({
+            where: { id: stableUuid(`audit:agent_decision:${job.id}`) },
+            create: {
+              id: stableUuid(`audit:agent_decision:${job.id}`),
+              entityType: 'recovery_jobs',
+              entityId: job.id,
+              action: 'agent_decision',
+              oldValue: {},
+              newValue: actionPayload,
+              performedBy: 'agent',
+            },
+            update: {},
+          })
+        } else {
+          let finalDecision = await prisma.agentDecision.findUnique({ where: { id: decisionId } })
+          const startWait = Date.now()
+          while (finalDecision?.modelVersion === 'in_progress' && Date.now() - startWait < 10_000) {
+            await new Promise((r) => setTimeout(r, 50))
+            finalDecision = await prisma.agentDecision.findUnique({ where: { id: decisionId } })
+          }
+          const payload = (finalDecision?.actionPayload as Record<string, unknown>) ?? {}
+          agent = {
+            decision_type: (finalDecision?.decisionType ?? 'escalate_hitl') as AgentResponse['decision_type'],
+            failure_type: job.failureType,
+            explanation: finalDecision?.explanation ?? '',
+            customer_message: typeof payload.customer_message === 'string' ? payload.customer_message : '',
+            action_payload: payload,
+            confidence: finalDecision?.confidence ?? 0,
+            model_version: finalDecision?.modelVersion ?? 'stored',
+            should_escalate_hitl:
+              Boolean(payload.should_escalate_hitl) || finalDecision?.decisionType === 'escalate_hitl',
+            taxonomy_match: typeof payload.taxonomy_match === 'string' ? payload.taxonomy_match : null,
+            tools_used: Array.isArray(payload.tools_used) ? (payload.tools_used as string[]) : [],
+          }
         }
       }
-      const decisionId = stableUuid(`agent-decision:${job.id}`)
-      const actionPayload = {
-        ...agent.action_payload,
-        customer_message: agent.customer_message,
-        taxonomy_match: agent.taxonomy_match,
-        model_version: agent.model_version,
-        tools_used: agent.tools_used,
-      }
-      await prisma.agentDecision.upsert({
-        where: { id: decisionId },
-        create: { id: decisionId, recoveryJobId: job.id, decisionType: agent.decision_type, explanation: agent.explanation, actionPayload, confidence: agent.confidence, modelVersion: agent.model_version },
-        update: { explanation: agent.explanation, actionPayload, confidence: agent.confidence, modelVersion: agent.model_version },
-      })
-      await prisma.auditLog.upsert({
-        where: { id: stableUuid(`audit:agent_decision:${job.id}`) },
-        create: { id: stableUuid(`audit:agent_decision:${job.id}`), entityType: 'recovery_jobs', entityId: job.id, action: 'agent_decision', oldValue: {}, newValue: actionPayload, performedBy: 'agent' },
-        update: {},
-      })
+
       if (agent.decision_type === 'one_click' && agent.customer_message && job.failedPayment.customerPhone) {
-        await getQueue('message').add('send-recovery-message', { recoveryJobId: job.id, toPhone: job.failedPayment.customerPhone, messageBody: agent.customer_message })
+        await getQueue('message').add(
+          'send-recovery-message',
+          {
+            recoveryJobId: job.id,
+            toPhone: job.failedPayment.customerPhone,
+            messageBody: agent.customer_message,
+          },
+          {
+            jobId: stableUuid(`message:${job.id}:${job.followUpCount}`),
+          },
+        )
       } else if (agent.decision_type === 'escalate_hitl' || agent.should_escalate_hitl) {
         const hitlTaskId = stableUuid(`hitl-task:${job.id}`)
-        await prisma.hitlQueue.upsert({ where: { id: hitlTaskId }, create: { id: hitlTaskId, recoveryJobId: job.id, reason: agent.explanation, status: 'pending' }, update: {} })
-        await prisma.recoveryJob.update({ where: { id: job.id }, data: { status: 'hitl' } })
-        await getQueue('hitl').add('review', { recoveryJobId: job.id, reason: agent.explanation }, { jobId: stableUuid(`hitl-review:${job.id}`) })
+        await prisma.hitlQueue.upsert({
+          where: { id: hitlTaskId },
+          create: {
+            id: hitlTaskId,
+            recoveryJobId: job.id,
+            reason: agent.explanation,
+            status: 'pending',
+          },
+          update: {},
+        })
+        await prisma.recoveryJob.update({
+          where: { id: job.id },
+          data: { status: 'hitl' },
+        })
+        await getQueue('hitl').add(
+          'review',
+          { recoveryJobId: job.id, reason: agent.explanation },
+          { jobId: stableUuid(`hitl-review:${job.id}`) },
+        )
       }
       break
     }
