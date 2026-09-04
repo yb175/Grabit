@@ -32,27 +32,33 @@ The engine evaluates rules in strict sequential order. The first rule that match
                                         │ No
                                         ▼
                      ┌───────────────────────────────────────┐
-                     │ 3. Is Job Stale (>24h since outreach)?│ ── Yes ──> [ stale ]
+                     │ 3. Follow-up Count >= Max Follow-ups? │ ── Yes ──> [ stop_unrecovered ]
                      └──────────────────┬────────────────────┘
                                         │ No
                                         ▼
                      ┌───────────────────────────────────────┐
-                     │ 4. Follow-up Count >= Max Follow-ups? │ ── Yes ──> [ stop_unrecovered ]
+                     │ 4. Already Marked Stale?             │ ── Yes ──> [ stale ]
                      └──────────────────┬────────────────────┘
                                         │ No
                                         ▼
                      ┌───────────────────────────────────────┐
-                     │ 5. Amount >= ₹10k or Low Confidence?  │ ── Yes ──> [ hitl ]
+                     │ 5. >24h Since Outreach, Follow-ups   │ ── Yes ──> [ stale ]
+                     │    Still Remaining?                  │
                      └──────────────────┬────────────────────┘
                                         │ No
                                         ▼
                      ┌───────────────────────────────────────┐
-                     │ 6. Is this a Known Hard Decline Code? │ ── Yes ──> [ stop_unrecovered ]
+                     │ 6. Amount >= ₹10k or Low Confidence?  │ ── Yes ──> [ hitl ]
                      └──────────────────┬────────────────────┘
                                         │ No
                                         ▼
                      ┌───────────────────────────────────────┐
-                     │ 7. Smart Timing: Quiet / Salary / Gap │ ── Triggered ──> [ delay ]
+                     │ 7. Is this a Known Hard Decline Code? │ ── Yes ──> [ stop_unrecovered ]
+                     └──────────────────┬────────────────────┘
+                                        │ No
+                                        ▼
+                     ┌───────────────────────────────────────┐
+                     │ 8. Smart Timing: Quiet / Salary / Gap │ ── Triggered ──> [ delay ]
                      └──────────────────┬────────────────────┘
                                         │ All Clear
                                         ▼
@@ -68,8 +74,9 @@ The engine evaluates rules in strict sequential order. The first rule that match
 | :--- | :--- | :--- | :--- | :--- |
 | **1** | `already_recovered` | `payment.isPaid === true` or `job.status === 'recovered'` | `stop_recovered` | Mark recovered, write `recovery_ledger` entry. |
 | **2** | `hitl_rejected` | `hitlStatus === 'rejected'` or `job.status === 'rejected'` | `stop_rejected` | Mark rejected, record audit log. |
-| **3** | `stale_timeout` / `stale_status` | Elapsed time since last outreach $\ge 24\text{h}$ | `stale` | Mark stale, stop future retries. |
-| **4** | `max_followups_exceeded` | `followUpCount >= maxFollowUps` (default: 2) | `stop_unrecovered` | Mark unrecovered, close ledger. |
+| **3** | `max_followups_exceeded` | `followUpCount >= maxFollowUps` (default: 2) | `stop_unrecovered` | Mark unrecovered, close ledger. Evaluated before both stale checks so an exhausted budget always closes with a ledger row. |
+| **4** | `stale_status` | `job.status === 'stale'` | `stale` | Keep an already-stale job terminal (only reached while follow-ups remain). |
+| **5** | `stale_timeout` | Elapsed time since last outreach $\ge 24\text{h}$ | `stale` | Mark stale, stop future retries (only while follow-ups remain). |
 | **5** | `hitl_high_value` | Amount $\ge \text{₹}10,000$ | `hitl` | Escalate to human review in `hitl_queue`. |
 | **5** | `hitl_low_confidence` | AI confidence $< 0.70$ (70%) | `hitl` | Escalate to human review in `hitl_queue`. |
 | **5** | `hitl_ambiguous` | `isAmbiguous === true` | `hitl` | Escalate to human review in `hitl_queue`. |

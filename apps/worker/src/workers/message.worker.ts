@@ -4,7 +4,7 @@ import { Worker } from 'bullmq'
 import { prisma } from '@grabit/db'
 import { config } from '@grabit/config'
 import { DEFAULT_STOPPING_RULES_CONFIG } from '@grabit/core'
-import { QUEUES } from '@grabit/queue'
+import { QUEUES, getQueue } from '@grabit/queue'
 import nodemailer from 'nodemailer'
 import { stableUuid } from './recovery.worker.js'
 
@@ -225,22 +225,48 @@ function providerFor(messageId: string): MessageProvider {
   throw new Error(`Unsupported MESSAGE_CHANNEL: ${config.messageChannel}`)
 }
 
+/**
+ * After a successful send, schedule the next recovery tick (the wait window).
+ * The recovery worker re-evaluates the job on tick instead of blindly sending:
+ *   paid            -> stop_recovered + ledger   (no AI, no send)
+ *   unpaid, count<max -> stopping rules -> next follow-up send
+ *   unpaid, count==max -> stop_unrecovered + ledger (no third send)
+ *   >24h silence    -> stale
+ * Deterministic jobId (per #11 style) makes repeated adds a no-op, so a
+ * retry/replay never double-schedules and never double-sends.
+ */
+function scheduleFollowUpTick(recoveryJobId: string, followUpCount: number, delayMs: number) {
+  return getQueue('recovery').add(
+    'evaluate-recovery',
+    { recoveryJobId },
+    { delay: delayMs, jobId: stableUuid(`recovery:${recoveryJobId}:fu${followUpCount}`) },
+  )
+}
+
 export async function processMessage(
   data: MessageJobData,
   now = new Date(),
   provider?: MessageProvider,
 ) {
-  const job = await prisma.recoveryJob.findUnique({ where: { id: data.recoveryJobId } })
+  const job = await prisma.recoveryJob.findUnique({
+    where: { id: data.recoveryJobId },
+    include: { failedPayment: true },
+  })
   if (!job) return { outcome: 'not_found' as const, recoveryJobId: data.recoveryJobId }
 
   const attempt = data.followUpCount ?? job.followUpCount
   const messageId = stableUuid(`message:${job.id}:${attempt}`)
   const existing = await prisma.message.findUnique({ where: { id: messageId } })
   if (existing?.status === 'sent' || existing?.status === 'delivered' || existing?.status === 'read') {
+    // Accepted message = sent count. A crash between markSent and bumpJob can
+    // leave the count at `attempt` while the row is sent/delivered/read (a
+    // delivery webhook may flip the status before the retry) — reconcile
+    // regardless of which accepted status it reached.
+    const countWasBumped = job.followUpCount === attempt
     // The provider already accepted this message. Repair any partially
     // reconciled state (e.g. follow-up bump lost in a previous crash) before
     // returning, so the pipeline never stalls or re-sends.
-    if (existing.status === 'sent' && job.followUpCount === attempt) {
+    if (countWasBumped) {
       const gapHours = (attempt + 1) === 1
         ? DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours
         : DEFAULT_STOPPING_RULES_CONFIG.followUp2GapHours
@@ -260,7 +286,7 @@ export async function processMessage(
             entityId: existing.id,
             action: 'message_sent',
             oldValue: { status: 'queued' },
-            newValue: { status: 'sent', providerMessageId: existing.providerMessageId },
+            newValue: { status: existing.status, providerMessageId: existing.providerMessageId },
             performedBy: 'message_worker',
           },
           update: {},
@@ -270,6 +296,25 @@ export async function processMessage(
         // this duplicate path retries the reconcile until it lands.
         throw reconcileError
       }
+    }
+    // Self-heal the lost-enqueue window: send committed + count bumped, but
+    // the delayed recovery tick was never added (crash between). Replay
+    // restores it idempotently via the stable jobId.
+    const tickCount = countWasBumped ? attempt + 1 : job.followUpCount
+    if (!job.failedPayment.isPaid && tickCount > attempt) {
+      const gapHours = tickCount === 1
+        ? DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours
+        : DEFAULT_STOPPING_RULES_CONFIG.followUp2GapHours
+      const fullGapMs = gapHours * 60 * 60 * 1000
+      // When the bump already committed (replay self-heal) the wait window is
+      // persisted in next_attempt_at — fire at that deadline, clamped to zero,
+      // instead of re-applying a fresh gap from the replay time. A reconcile
+      // that just wrote the bump sets next_attempt_at = now + gap, so the full
+      // gap is correct there.
+      const delayMs = countWasBumped || !job.nextAttemptAt
+        ? fullGapMs
+        : Math.max(job.nextAttemptAt.getTime() - now.getTime(), 0)
+      await scheduleFollowUpTick(job.id, tickCount, delayMs)
     }
     return { outcome: 'duplicate' as const, recoveryJobId: job.id, messageId }
   }
@@ -394,6 +439,14 @@ export async function processMessage(
     console.warn(`[message] transaction failed but send was reconciled for ${message.id}:`,
       transactionError instanceof Error ? transactionError.message : transactionError)
   }
+
+  // Follow-up wait window (see scheduleFollowUpTick). Skipped for already-paid
+  // payments — the tick would only re-confirm recovery. Errors propagate so
+  // BullMQ retries and the duplicate path restores the tick idempotently.
+  if (!job.failedPayment.isPaid) {
+    await scheduleFollowUpTick(job.id, nextFollowUpCount, gapHours * 60 * 60 * 1000)
+  }
+
   return { outcome: 'sent' as const, recoveryJobId: job.id, messageId, providerMessageId: result.providerMessageId }
 }
 
