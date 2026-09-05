@@ -10,11 +10,15 @@ export function HitlInbox() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<Record<string, string>>({})
   const [actionError, setActionError] = useState<string | null>(null)
+  // Generation counter: increments on every review action so the background
+  // poll discards responses from fetches that started before the action.
+  const [pollGen, setPollGen] = useState(0)
 
   useEffect(() => {
     let interval: number | undefined
     let cancelled = false
     let inFlight: AbortController | null = null
+    const gen = pollGen // capture current generation
 
     const poll = async () => {
       if (inFlight) return
@@ -22,7 +26,8 @@ export function HitlInbox() {
       inFlight = controller
       try {
         const list = await fetchHitlTasks('pending', controller.signal)
-        if (cancelled) return
+        // Discard if a review action started a newer generation or unmounted.
+        if (cancelled || controller.signal.aborted) return
         setTasks(list)
         setError(null)
       } catch (err) {
@@ -52,7 +57,9 @@ export function HitlInbox() {
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('focus', onFocus)
     }
-  }, [])
+  // Re-run the polling loop after every review action (pollGen bump) so the
+  // first poll after approve/reject comes from a fresh, non-cancelled loop.
+  }, [pollGen]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const review = async (task: HitlTask, action: 'approve' | 'reject') => {
     if (busy[task.id]) return
@@ -60,10 +67,13 @@ export function HitlInbox() {
     setActionError(null)
     try {
       await (action === 'approve' ? approveHitlTask(task.id) : rejectHitlTask(task.id))
-      // Refetch immediately so the row leaves the pending queue and the count
-      // drops; the poll keeps it honest afterwards.
-      setTasks(await fetchHitlTasks('pending'))
+      // Bump generation — the current poll loop is cancelled and a fresh one
+      // starts immediately, preventing a stale in-flight poll from overwriting
+      // the refetch result with the pre-review pending list.
+      setPollGen((g) => g + 1)
     } catch (err) {
+      // The POST failed — the action did not commit. Report it without hiding
+      // a successful action behind a refresh error.
       setActionError(
         `${action === 'approve' ? 'Approve' : 'Reject'} failed — ${err instanceof Error ? err.message : 'retry'}`,
       )
@@ -78,7 +88,9 @@ export function HitlInbox() {
 
   const list = tasks ?? []
   const loading = tasks === null && !error
-  const highest = list.length > 1 ? Math.max(...list.map((t) => Number(t.recoveryJob.failedPayment.amount))) : null
+  // Show amber highlight for the highest-value case in any non-empty queue
+  // (includes queues with a single item).
+  const highest = list.length > 0 ? Math.max(...list.map((t) => Number(t.recoveryJob.failedPayment.amount))) : null
 
   return (
     <div className="page">
@@ -138,7 +150,14 @@ export function HitlInbox() {
                     <td className="action-col"><span className="skeleton skeleton-text skeleton-action" /></td>
                   </tr>
                 ))}
-              {!loading && list.length === 0 && (
+              {!loading && error && (
+                <tr>
+                  <td colSpan={9} className="empty-row">
+                    Queue unavailable — {error.includes('401') ? 'check VITE_GRABIT_API_KEY' : 'retrying…'}
+                  </td>
+                </tr>
+              )}
+              {!loading && !error && list.length === 0 && (
                 <tr>
                   <td colSpan={9} className="empty-row">
                     0 cases — nothing awaiting human review. Run <code>pnpm db:seed</code> to add demo HITL tasks.

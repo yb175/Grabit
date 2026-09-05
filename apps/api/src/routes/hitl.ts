@@ -298,9 +298,21 @@ app.post('/:id/approve', async (c) => {
         { jobId: `hitl-approved-${task.recoveryJobId}`, removeOnComplete: true, removeOnFail: 100 },
       )
     } catch (queueErr) {
-      // Best-effort: the approval is already committed; a missed resume just
-      // leaves the case in processing until the next natural trigger.
-      console.error('[hitl] failed to enqueue resume after approval:', queueErr)
+      // Redis/BullMQ unavailable after the DB commit. The approval is durable
+      // but the resume is not. Return a 502 so the caller knows to retry the
+      // approve endpoint (idempotent: alreadyProcessed path) which will
+      // re-enqueue the resume without flipping the status again.
+      console.error('[hitl] failed to enqueue resume after approval; caller should retry:', queueErr)
+      return c.json(
+        {
+          error: 'resume_enqueue_failed',
+          message: 'Approval committed but the pipeline resume could not be queued — retry POST /hitl/:id/approve to re-enqueue.',
+          status: 'approved',
+          task: updatedTask,
+          messageEnqueued: false,
+        },
+        502,
+      )
     }
   }
 

@@ -229,6 +229,9 @@ export async function processRecoveryJob(
     case 'stop_recovered': {
       const ledgerId = stableUuid(`recovery-ledger:recovered:${job.id}`)
       const auditId = stableUuid(`audit:stop_recovered:${job.id}`)
+      // Use one_click method when the job had a Razorpay payment link — the
+      // customer paid via the link we sent rather than retrying organically.
+      const recoveryMethod = job.paymentLinkId ? 'one_click' : 'retry'
       await prisma.$transaction([
         prisma.recoveryJob.update({
           where: { id: job.id },
@@ -242,7 +245,7 @@ export async function processRecoveryJob(
             failedPaymentId: job.failedPayment.id,
             amount: job.failedPayment.amount,
             status: 'recovered',
-            recoveryMethod: 'retry',
+            recoveryMethod,
             recoveredAt: now,
           },
           update: {},
@@ -675,13 +678,18 @@ export async function processRecoveryJob(
           // approval: keep the case alive on the follow-up cadence instead.
           // # ponytail: per-escalation follow-up inflation; revisit policy if
           // the LLM routinely re-escalates approved high-value cases.
+          const nextFollowUpCount = job.followUpCount + 1
+          const gapHours = nextFollowUpCount <= 1
+            ? (data.config?.followUp1GapHours ?? DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours)
+            : (data.config?.followUp2GapHours ?? DEFAULT_STOPPING_RULES_CONFIG.followUp2GapHours)
+          const nextAttemptAt = new Date(now.getTime() + gapHours * 60 * 60 * 1000)
           await prisma.$transaction([
             prisma.recoveryJob.update({
               where: { id: job.id },
               data: {
                 status: 'waiting',
                 followUpCount: { increment: 1 },
-                nextAttemptAt: new Date(now.getTime() + DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours * 60 * 60 * 1000),
+                nextAttemptAt,
               },
             }),
             prisma.auditLog.upsert({
@@ -698,6 +706,16 @@ export async function processRecoveryJob(
               update: {},
             }),
           ])
+          // Enqueue the delayed recovery tick so the case actually resumes at
+          // nextAttemptAt instead of sitting in `waiting` forever.
+          await getQueue('recovery').add(
+            'evaluate-recovery',
+            { recoveryJobId: job.id },
+            {
+              delay: gapHours * 60 * 60 * 1000,
+              jobId: stableUuid(`recovery:${job.id}:fu${nextFollowUpCount}`),
+            },
+          )
         } else {
           await prisma.hitlQueue.upsert({
             where: { id: hitlTaskId },

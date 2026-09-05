@@ -93,10 +93,16 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
     }
 
     console.log(`[ingest] ${event} marked payment ${existing.id} (${razorpayPaymentId}) as paid`)
+    const activeJob = existing.recoveryJobs[0]
+    if (activeJob) {
+      console.log(`[ingest] ${event} ${razorpayPaymentId} — job ${activeJob.id} found, enqueuing recovery re-evaluation`)
+    } else {
+      console.log(`[ingest] ${event} ${razorpayPaymentId} — no active recovery job, skipping re-evaluation`)
+    }
     return {
       outcome: 'updated',
       failedPaymentId: existing.id,
-      recoveryJobId: existing.recoveryJobs[0]?.id ?? null,
+      recoveryJobId: activeJob?.id ?? null,
       failureType: null,
     }
   }
