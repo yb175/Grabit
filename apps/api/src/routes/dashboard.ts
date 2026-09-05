@@ -11,6 +11,7 @@
 // money event timestamp).
 import { Hono } from 'hono'
 import { prisma } from '@grabit/db'
+import { subscribeDashboardUpdates } from '@grabit/queue'
 
 const app = new Hono()
 
@@ -66,3 +67,48 @@ app.get('/summary', async (c) => {
 })
 
 export default app
+
+// GET /dashboard/events — SSE stream for instant dashboard updates.
+// The browser opens one long-lived connection; the worker publishes to
+// Redis Pub/Sub after every recovery status change, and this endpoint
+// forwards it as an SSE event so the frontend can refetch immediately
+// instead of waiting for the next 3s poll.
+app.get('/events', async (c) => {
+  const { sub, channel } = subscribeDashboardUpdates()
+  await sub.connect()
+  await sub.subscribe(channel)
+
+  const stream = new ReadableStream({
+    start(controller) {
+      // Send a heartbeat comment immediately so the browser knows the
+      // connection is alive.
+      controller.enqueue(': connected\n\n')
+
+      const onMessage = (_ch: string, message: string) => {
+        controller.enqueue(`data: ${message}\n\n`)
+      }
+      sub.on('message', onMessage)
+
+      // Heartbeat every 15s to keep proxies from closing idle connections.
+      const heartbeat = setInterval(() => {
+        try { controller.enqueue(': heartbeat\n\n') } catch {}
+      }, 15_000)
+
+      // Cleanup when the client disconnects.
+      c.req.raw.signal.addEventListener('abort', () => {
+        clearInterval(heartbeat)
+        sub.unsubscribe(channel).catch(() => {})
+        sub.quit().catch(() => {})
+        try { controller.close() } catch {}
+      })
+    },
+  })
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  })
+})

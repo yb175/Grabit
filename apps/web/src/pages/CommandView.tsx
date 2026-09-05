@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchSummary, fetchJobs, jobUrl, type Summary, type Job, type LedgerEntry } from '../api'
+import { fetchSummary, fetchJobs, dashboardEventsUrl, jobUrl, type Summary, type Job, type LedgerEntry } from '../api'
 import { fmtINR, fmtDateTime, shortId, failureLabel } from '../format'
 import { KpiCard } from '../components/KpiCard'
 
@@ -83,9 +83,17 @@ export function CommandView() {
     document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('focus', onFocus)
 
+    // Push refresh: the worker publishes after capture/recovery. Keep the 3s
+    // poll as a fallback for missed events or a temporarily unavailable stream.
+    const events = new EventSource(dashboardEventsUrl())
+    events.onmessage = () => {
+      if (document.visibilityState === 'visible') poll()
+    }
+
     return () => {
       cancelled = true
       inFlight?.abort()
+      events.close()
       window.clearInterval(interval)
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('focus', onFocus)
@@ -108,7 +116,7 @@ export function CommandView() {
           {error ? (
             <span className="poll-error">API unreachable — retrying…</span>
           ) : (
-            lastUpdated && <span className="poll-ok">updated {lastUpdated} · 3s</span>
+            lastUpdated && <span className="poll-ok">updated {lastUpdated} · live</span>
           )}
         </div>
       </div>

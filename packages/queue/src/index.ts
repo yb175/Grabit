@@ -12,6 +12,7 @@
 // from tests is side-effect free.
 
 import { Queue } from 'bullmq'
+import { Redis } from 'ioredis'
 import { config } from '@grabit/config'
 
 export const QUEUES = {
@@ -54,5 +55,41 @@ export async function closeAllQueues(): Promise<void> {
     await q.close()
   }
   queueCache.clear()
+}
+
+// ---------------------------------------------------------------------------
+// Redis Pub/Sub for real-time dashboard push (SSE)
+// ---------------------------------------------------------------------------
+
+const DASHBOARD_CHANNEL = 'grabit:dashboard:update'
+
+let pubClient: Redis | null = null
+
+function getPubClient(): Redis {
+  if (!pubClient) {
+    pubClient = new Redis(config.redisUrl, { maxRetriesPerRequest: 1, lazyConnect: true })
+    pubClient.on('error', () => {}) // swallow — pub is best-effort
+  }
+  return pubClient
+}
+
+/** Worker calls this after a status/ledger change. Best-effort, never throws. */
+export async function publishDashboardUpdate(payload: {
+  recoveryJobId: string
+  status: string
+  action?: string
+}): Promise<void> {
+  try {
+    await getPubClient().publish(DASHBOARD_CHANNEL, JSON.stringify(payload))
+  } catch {
+    // Best-effort: if Redis pub fails the 3s poll still works.
+  }
+}
+
+/** API calls this to get a subscriber that emits dashboard update messages. */
+export function subscribeDashboardUpdates(): { sub: Redis; channel: string } {
+  const sub = new Redis(config.redisUrl, { maxRetriesPerRequest: 1, lazyConnect: true })
+  sub.on('error', () => {}) // swallow reconnect noise
+  return { sub, channel: DASHBOARD_CHANNEL }
 }
 

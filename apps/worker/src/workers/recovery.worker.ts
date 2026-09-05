@@ -24,7 +24,7 @@ import {
   paymentLinkService,
   PaymentLinkService,
 } from '@grabit/core'
-import { QUEUES, getQueue } from '@grabit/queue'
+import { QUEUES, getQueue, publishDashboardUpdate } from '@grabit/queue'
 
 interface AgentResponse {
   decision_type: 'stop' | 'delay' | 'one_click' | 'escalate_hitl'
@@ -264,6 +264,7 @@ export async function processRecoveryJob(
           update: {},
         }),
       ])
+      await publishDashboardUpdate({ recoveryJobId: job.id, status: 'recovered', action: 'stop_recovered' })
       break
     }
 
@@ -300,6 +301,7 @@ export async function processRecoveryJob(
           update: {},
         }),
       ])
+      await publishDashboardUpdate({ recoveryJobId: job.id, status: 'unrecovered', action: 'stop_unrecovered' })
       break
     }
 
