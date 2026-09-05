@@ -20,9 +20,18 @@ import audit from './routes/audit.js'
 
 export const app = new Hono()
 
-// The web Command View (vite dev server / static build) reads /dashboard and
-// /jobs from a different origin — allow it.
-app.use('*', cors())
+// Browser origins allowed to read the API (the Command View web app).
+// No wildcard: /jobs carries customer contact + payment metadata, so only the
+// configured dashboard origins may call it cross-origin. Override via
+// CORS_ORIGINS (comma-separated); defaults cover the vite dev server.
+const CORS_ORIGINS = (
+  process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173'
+)
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean)
+
+app.use('*', cors({ origin: CORS_ORIGINS }))
 
 // Health check: proves both the API and the Postgres connection are alive.
 app.get('/health', async (c) => {

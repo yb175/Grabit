@@ -12,7 +12,8 @@ interface AppShellProps {
   /** Right-side merchant context chip, e.g. "rzp_test · Last 30 days". */
   context?: ReactNode
   children: ReactNode
-  /** Bottom pipeline line; override with null to hide. */
+  /** Bottom footer; undefined renders the default pipeline line, null hides it,
+   * and any other node replaces the pipeline. */
   footer?: ReactNode
 }
 
@@ -53,7 +54,7 @@ export function AppShell({ nav = [], context, children, footer }: AppShellProps)
 
       <main className="content">{children}</main>
 
-      {footer !== null && (
+      {footer === undefined ? (
         <footer className="pipeline">
           {PIPELINE_LINE.map((step, i) => (
             <span key={step} className="pipeline-step">
@@ -62,6 +63,8 @@ export function AppShell({ nav = [], context, children, footer }: AppShellProps)
             </span>
           ))}
         </footer>
+      ) : (
+        footer
       )}
     </div>
   )

@@ -230,17 +230,22 @@ code {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  container-type: inline-size;
 }
 
 .kpi-label {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--muted);
+  /* Label + badge (e.g. "HITL pending" + "requires action") must stay on one
+     line at the six-card layout width. */
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .kpi-badge {
@@ -250,9 +255,29 @@ code {
   text-transform: none;
   color: var(--amber);
   background: var(--amber-bg);
-  padding: 2px 7px;
+  padding: 2px 6px;
   border-radius: 999px;
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Shrink type as the card narrows so label + badge never wrap. Must come
+   after the base rules above (same specificity, later wins). */
+@container (max-width: 213px) {
+  .kpi-label {
+    font-size: 11px;
+    letter-spacing: 0.02em;
+  }
+  .kpi-badge {
+    font-size: 9.5px;
+  }
+}
+
+@container (max-width: 200px) {
+  .kpi-badge {
+    font-size: 9px;
+    padding: 2px 5px;
+  }
 }
 
 .kpi-value {
@@ -284,6 +309,112 @@ code {
   border-radius: 5px;
   padding: 2px 6px;
   align-self: flex-start;
+}
+
+/* ------------------------------------------------ skeleton / shimmer */
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #e9ecef;
+  border-radius: 4px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.skeleton::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0.65) 40%,
+    rgba(255, 255, 255, 0.85) 50%,
+    rgba(255, 255, 255, 0.65) 60%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: shimmer 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  content: '';
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton-val {
+  height: 28px;
+  width: 100px;
+  margin: 3px 0;
+  border-radius: 6px;
+}
+
+.skeleton-sub {
+  height: 13px;
+  width: 130px;
+  border-radius: 4px;
+}
+
+.skeleton-tag {
+  height: 18px;
+  width: 72px;
+  border-radius: 5px;
+  margin-top: 2px;
+}
+
+.skeleton-badge {
+  height: 16px;
+  width: 82px;
+  border-radius: 999px;
+}
+
+.skeleton-count {
+  height: 14px;
+  width: 48px;
+  border-radius: 4px;
+}
+
+.skeleton-text {
+  height: 14px;
+  display: block;
+}
+
+.skeleton-id {
+  width: 72px;
+}
+
+.skeleton-num {
+  width: 65px;
+  margin-left: auto;
+}
+
+.skeleton-type {
+  width: 110px;
+}
+
+.skeleton-pill {
+  height: 20px;
+  width: 86px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.skeleton-date {
+  width: 115px;
+}
+
+.skeleton-action {
+  width: 32px;
+  margin-left: auto;
+}
+
+.skeleton-row td {
+  padding: 13px 18px;
 }
 
 /* ------------------------------------------------ jobs table */
@@ -442,8 +573,17 @@ code {
 
 @media (max-width: 720px) {
   .topbar {
-    padding: 0 16px;
-    gap: 12px;
+    /* Wrap instead of forcing one row — brand + live + nav + chip overflow
+       common phone widths otherwise. */
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 8px 16px;
+  }
+  .topbar-nav {
+    order: 3;
+    flex-basis: 100%;
   }
   .merchant-chip {
     font-size: 11px;

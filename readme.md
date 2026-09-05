@@ -254,7 +254,7 @@ grabit/
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22+ (repo scripts use `node --env-file-if-exists`, added in Node 22.9)
 - pnpm (`npm i -g pnpm`)
 - Docker (for Postgres + Redis)
 

@@ -47,8 +47,10 @@ app.get('/summary', async (c) => {
       where: { status: { in: [...TERMINAL_STOPPED] }, createdAt: { gte: since } },
     }),
     // HITL: reviews awaiting a human, not merely jobs in hitl state.
+    // No createdAt window — a pending review older than 30 days is still
+    // outstanding work and must appear in the "requires action" backlog.
     prisma.hitlQueue.count({
-      where: { status: 'pending', createdAt: { gte: since } },
+      where: { status: 'pending' },
     }),
   ])
 

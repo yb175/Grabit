@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 
 interface KpiCardProps {
   label: string
-  value: ReactNode
+  value?: ReactNode
   /** Money values render in JetBrains Mono; counts stay in Inter. */
   mono?: boolean
   sub?: string
@@ -10,18 +10,33 @@ interface KpiCardProps {
   tag?: string
   /** Inline badge next to the label (e.g. HITL "requires action"). */
   badge?: { text: string }
+  /** Shimmer skeleton placeholder while loading. */
+  loading?: boolean
 }
 
-export function KpiCard({ label, value, mono, sub, tag, badge }: KpiCardProps) {
+export function KpiCard({ label, value, mono, sub, tag, badge, loading }: KpiCardProps) {
   return (
     <section className="kpi-card">
       <div className="kpi-label">
         {label}
-        {badge && <span className="kpi-badge">{badge.text}</span>}
+        {badge && !loading && <span className="kpi-badge">{badge.text}</span>}
+        {badge && loading && <span className="skeleton skeleton-badge" />}
       </div>
-      <div className={mono ? 'kpi-value mono' : 'kpi-value'}>{value}</div>
-      {sub && <div className="kpi-sub">{sub}</div>}
-      {tag && <div className="kpi-tag">{tag}</div>}
+      {loading ? (
+        <div className="skeleton skeleton-val" />
+      ) : (
+        <div className={mono ? 'kpi-value mono' : 'kpi-value'}>{value}</div>
+      )}
+      {loading ? (
+        <div className="skeleton skeleton-sub" />
+      ) : (
+        sub && <div className="kpi-sub">{sub}</div>
+      )}
+      {loading ? (
+        <div className="skeleton skeleton-tag" />
+      ) : (
+        tag && <div className="kpi-tag">{tag}</div>
+      )}
     </section>
   )
 }

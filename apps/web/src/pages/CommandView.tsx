@@ -36,10 +36,19 @@ export function CommandView() {
 
   useEffect(() => {
     let interval: number | undefined
+    let cancelled = false
+    let inFlight: AbortController | null = null
 
     const poll = async () => {
+      // One poll at a time: overlapping polls (focus + visibility + interval
+      // all firing together, or a slow response) would race and settle in
+      // arrival order, letting a stale payload overwrite a newer one.
+      if (inFlight) return
+      const controller = new AbortController()
+      inFlight = controller
       try {
-        const [s, j] = await Promise.all([fetchSummary(), fetchJobs()])
+        const [s, j] = await Promise.all([fetchSummary(controller.signal), fetchJobs(controller.signal)])
+        if (cancelled) return
         setSummary(s)
         setJobs(j)
         setError(null)
@@ -51,7 +60,10 @@ export function CommandView() {
           }),
         )
       } catch (err) {
+        if (cancelled || controller.signal.aborted) return
         setError(err instanceof Error ? err.message : 'API unreachable')
+      } finally {
+        if (inFlight === controller) inFlight = null
       }
     }
 
@@ -72,6 +84,8 @@ export function CommandView() {
     window.addEventListener('focus', onFocus)
 
     return () => {
+      cancelled = true
+      inFlight?.abort()
       window.clearInterval(interval)
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('focus', onFocus)
@@ -80,6 +94,8 @@ export function CommandView() {
 
   const s = summary
   const list = jobs ?? []
+  const isSummaryLoading = summary === null && !error
+  const isJobsLoading = jobs === null && !error
 
   return (
     <div className="page">
@@ -104,24 +120,28 @@ export function CommandView() {
           mono
           sub="total money recovered"
           tag="GET /ledger"
+          loading={isSummaryLoading}
         />
         <KpiCard
           label="Recovered cases"
           value={s?.recoveredCases ?? 0}
           sub="closed as recovered"
           tag="GET /ledger"
+          loading={isSummaryLoading}
         />
         <KpiCard
           label="Active jobs"
           value={s?.activeJobs ?? 0}
           sub="pending · processing · waiting"
           tag="GET /jobs"
+          loading={isSummaryLoading}
         />
         <KpiCard
           label="Stopped"
           value={s?.stopped ?? 0}
           sub="unrecovered · rejected · stale"
           tag="GET /jobs"
+          loading={isSummaryLoading}
         />
         <KpiCard
           label="HITL pending"
@@ -129,6 +149,7 @@ export function CommandView() {
           badge={{ text: 'requires action' }}
           sub="awaiting human review"
           tag="GET /hitl?status=pending"
+          loading={isSummaryLoading}
         />
         <KpiCard
           label="One-click recovered"
@@ -136,13 +157,16 @@ export function CommandView() {
           mono
           sub="via one-click links"
           tag="GET /ledger"
+          loading={isSummaryLoading}
         />
       </div>
 
       <section className="table-card">
         <div className="table-head">
           <h2>Recovery jobs</h2>
-          <span className="table-count">{list.length} jobs</span>
+          <span className="table-count">
+            {isJobsLoading ? <span className="skeleton skeleton-count" /> : `${list.length} jobs`}
+          </span>
         </div>
         <div className="table-wrap">
           <table className="jobs-table">
@@ -158,36 +182,63 @@ export function CommandView() {
               </tr>
             </thead>
             <tbody>
-              {list.length === 0 && (
+              {isJobsLoading &&
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={`skeleton-row-${i}`} className="skeleton-row">
+                    <td>
+                      <span className="skeleton skeleton-text skeleton-id" />
+                    </td>
+                    <td className="num">
+                      <span className="skeleton skeleton-text skeleton-num" />
+                    </td>
+                    <td>
+                      <span className="skeleton skeleton-text skeleton-type" />
+                    </td>
+                    <td>
+                      <span className="skeleton skeleton-pill" />
+                    </td>
+                    <td className="num">
+                      <span className="skeleton skeleton-text skeleton-num" />
+                    </td>
+                    <td>
+                      <span className="skeleton skeleton-text skeleton-date" />
+                    </td>
+                    <td className="action-col">
+                      <span className="skeleton skeleton-text skeleton-action" />
+                    </td>
+                  </tr>
+                ))}
+              {!isJobsLoading && list.length === 0 && (
                 <tr>
                   <td colSpan={7} className="empty-row">
                     No recovery jobs yet — run <code>pnpm db:seed</code> or send a webhook.
                   </td>
                 </tr>
               )}
-              {list.map((job) => {
-                const info = statusInfo(job.status)
-                const recovered = latestRecovered(job)
-                return (
-                  <tr key={job.id}>
-                    <td className="mono id-cell" title={job.id}>
-                      {shortId(job.id)}
-                    </td>
-                    <td className="mono num">{fmtINR(job.amount)}</td>
-                    <td>{failureLabel(job.failureType)}</td>
-                    <td>
-                      <span className={`pill ${info.tone}`}>{info.label}</span>
-                    </td>
-                    <td className="mono num">{recovered ? fmtINR(Number(recovered.amount)) : '—'}</td>
-                    <td className="mono">{fmtDateTime(recovered?.recoveredAt ?? null)}</td>
-                    <td className="action-col">
-                      <a className="view-link" href={timelineUrl(job.id)} target="_blank" rel="noreferrer">
-                        View
-                      </a>
-                    </td>
-                  </tr>
-                )
-              })}
+              {!isJobsLoading &&
+                list.map((job) => {
+                  const info = statusInfo(job.status)
+                  const recovered = latestRecovered(job)
+                  return (
+                    <tr key={job.id}>
+                      <td className="mono id-cell" title={job.id}>
+                        {shortId(job.id)}
+                      </td>
+                      <td className="mono num">{fmtINR(job.amount)}</td>
+                      <td>{failureLabel(job.failureType)}</td>
+                      <td>
+                        <span className={`pill ${info.tone}`}>{info.label}</span>
+                      </td>
+                      <td className="mono num">{recovered ? fmtINR(Number(recovered.amount)) : '—'}</td>
+                      <td className="mono">{fmtDateTime(recovered?.recoveredAt ?? null)}</td>
+                      <td className="action-col">
+                        <a className="view-link" href={timelineUrl(job.id)} target="_blank" rel="noreferrer">
+                          View
+                        </a>
+                      </td>
+                    </tr>
+                  )
+                })}
             </tbody>
           </table>
         </div>

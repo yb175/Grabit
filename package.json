@@ -1,6 +1,9 @@
 {
   "name": "grabit",
   "private": true,
+  "engines": {
+    "node": ">=22.9"
+  },
   "scripts": {
     "demo:batch": "node --env-file-if-exists=.env --import tsx scripts/demo-batch.ts",
     "db:seed": "node --env-file-if-exists=.env --import tsx scripts/seed.ts",

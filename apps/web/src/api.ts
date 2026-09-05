@@ -3,6 +3,12 @@
 
 const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3100'
 
+// Matches the dashboard KPI window — the table must describe "Last 30 days" too.
+const WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+
+// Hard cap so a hung API can't leave the dashboard without an error state.
+const REQUEST_TIMEOUT_MS = 10_000
+
 export interface Summary {
   windowDays: number
   recoveredAmount: number
@@ -31,18 +37,22 @@ export interface Job {
   ledger: LedgerEntry[]
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`)
+async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  const res = await fetch(`${API_URL}${path}`, {
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+  })
   if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`)
   return res.json() as Promise<T>
 }
 
-export function fetchSummary(): Promise<Summary> {
-  return getJson<Summary>('/dashboard/summary')
+export function fetchSummary(signal?: AbortSignal): Promise<Summary> {
+  return getJson<Summary>('/dashboard/summary', signal)
 }
 
-export async function fetchJobs(): Promise<Job[]> {
-  const data = await getJson<{ jobs: Job[] }>('/jobs')
+export async function fetchJobs(signal?: AbortSignal): Promise<Job[]> {
+  const from = new Date(Date.now() - WINDOW_MS).toISOString()
+  const data = await getJson<{ jobs: Job[] }>(`/jobs?from=${encodeURIComponent(from)}`, signal)
   return data.jobs
 }
 

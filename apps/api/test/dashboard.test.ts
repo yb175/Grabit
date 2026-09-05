@@ -107,7 +107,11 @@ async function seedFixture(opts: {
   return { failedPayment, job }
 }
 
-test('GET /dashboard/summary returns 200 with zeroed KPIs on an empty DB', async () => {
+test('GET /dashboard/summary returns 200 with all KPI keys as numbers on an empty DB', async () => {
+  // Shape-only on purpose: `pnpm test` runs all API test files concurrently
+  // against one shared Postgres DB, so other suites' rows can be in-window and
+  // literal zero assertions would be flaky. The seeded test below asserts the
+  // real values.
   const res = await app.request('/dashboard/summary')
   assert.equal(res.status, 200)
   const data = await res.json()
@@ -138,29 +142,37 @@ test('GET /dashboard/summary — recovered ₹ equals ledger sum, counts reflect
   assert.equal(res.status, 200)
   const data = await res.json()
 
+  // Expected values use the same trailing-30-day window as the endpoint;
+  // retained rows older than 30 days are intentionally excluded by both.
+  // Computed after seeding, before the request, so fixtures (created ~now)
+  // are inside the window for both endpoint and assertions.
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+
   // recoveredAmount must equal the ledger sum of status=recovered rows
   const ledgerSum = await prisma.recoveryLedger.aggregate({
-    where: { status: 'recovered' },
+    where: { status: 'recovered', recoveredAt: { gte: since } },
     _sum: { amount: true },
   })
   assert.equal(data.recoveredAmount, Number(ledgerSum._sum.amount ?? 0))
 
-  const ledgerCases = await prisma.recoveryLedger.count({ where: { status: 'recovered' } })
+  const ledgerCases = await prisma.recoveryLedger.count({
+    where: { status: 'recovered', recoveredAt: { gte: since } },
+  })
   assert.equal(data.recoveredCases, ledgerCases)
 
   const oneClickSum = await prisma.recoveryLedger.aggregate({
-    where: { status: 'recovered', recoveryMethod: 'one_click' },
+    where: { status: 'recovered', recoveryMethod: 'one_click', recoveredAt: { gte: since } },
     _sum: { amount: true },
   })
   assert.equal(data.oneClickRecoveredAmount, Number(oneClickSum._sum.amount ?? 0))
 
   const active = await prisma.recoveryJob.count({
-    where: { status: { in: ['pending', 'processing', 'waiting'] } },
+    where: { status: { in: ['pending', 'processing', 'waiting'] }, createdAt: { gte: since } },
   })
   assert.equal(data.activeJobs, active)
 
   const stopped = await prisma.recoveryJob.count({
-    where: { status: { in: ['unrecovered', 'rejected', 'stale'] } },
+    where: { status: { in: ['unrecovered', 'rejected', 'stale'] }, createdAt: { gte: since } },
   })
   assert.equal(data.stopped, stopped)
 

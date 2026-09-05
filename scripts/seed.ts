@@ -32,11 +32,22 @@ function stableUuid(key: string): string {
   ].join('-')
 }
 
-const LOCAL_HOST = /localhost|127\.0\.0\.1|0\.0\.0\.0/
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'])
 function assertLocalDb(): void {
   const url = process.env.DATABASE_URL ?? 'postgresql://grabit:grabit@localhost:5433/grabit'
-  if (!LOCAL_HOST.test(url)) {
-    console.error('[db:seed] Refusing to seed: DATABASE_URL does not point at a local database.')
+  // Parse and allowlist the hostname — a full-URL substring regex would accept
+  // e.g. postgresql://localhost@prod-db.example/grabit and write to prod.
+  let host: string
+  try {
+    host = new URL(url).hostname
+  } catch {
+    console.error('[db:seed] Refusing to seed: DATABASE_URL is not a valid URL.')
+    process.exit(1)
+  }
+  if (!LOCAL_HOSTS.has(host)) {
+    console.error(
+      `[db:seed] Refusing to seed: DATABASE_URL host "${host}" is not a local database.`,
+    )
     process.exit(1)
   }
 }
@@ -260,7 +271,10 @@ async function seedHitlHighValue() {
 
   await prisma.hitlQueue.upsert({
     where: { id: stableUuid('seed:hitl:high') },
-    update: {},
+    // Reset review fields too: if a reviewer already approved/rejected the
+    // task, a re-run must restore it to a genuinely pending state — otherwise
+    // the job is `hitl` but the queue row is terminal and invisible.
+    update: { status: 'pending', reviewedBy: null, reviewedAt: null, notes: null },
     create: {
       id: stableUuid('seed:hitl:high'),
       recoveryJobId: jobId,
