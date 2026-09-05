@@ -883,3 +883,61 @@ code {
 .timeline-raw summary { cursor: pointer; font-weight: 750; }
 .timeline-raw pre { max-height: 240px; overflow: auto; margin-top: 12px; padding: 14px; background: var(--surface-2); color: var(--ink); font-size: 10px; }
 @media (max-width: 760px) { .timeline-workspace { grid-template-columns: 1fr; } .timeline-detail { min-height: 0; } .timeline-detail-empty { min-height: 180px; } .timeline-detail-grid { grid-template-columns: 1fr; } }
+/* ============================================================ HITL Inbox (issue #34) */
+
+/* Amber triage cue on the highest-value pending row (screenshot: amber left border). */
+.hitl-table tr.row-high td:first-child {
+  border-left: 3px solid #d97706;
+}
+
+/* Escalation reason truncates at inbox density; full text in native title tooltip. */
+.reason-cell {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-actions {
+  display: inline-flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.btn-approve,
+.btn-reject {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+
+.btn-approve {
+  color: #ffffff;
+  background: #111827;
+  border: 1px solid #111827;
+}
+
+.btn-approve:hover:not(:disabled) {
+  background: #1f2937;
+}
+
+.btn-reject {
+  color: var(--text);
+  background: #ffffff;
+  border: 1px solid var(--border);
+}
+
+.btn-reject:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.btn-approve:disabled,
+.btn-reject:disabled {
+  opacity: 0.55;
+  cursor: default;
+}

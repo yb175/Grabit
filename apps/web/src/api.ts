@@ -3,6 +3,11 @@
 
 const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3100'
 
+// /hitl/* is the one route group behind x-api-key (v0 auth, fail-closed). The
+// browser reads the demo key from VITE_GRABIT_API_KEY; unset => requests 401
+// and the inbox shows the API-unreachable error state.
+const API_KEY: string = import.meta.env.VITE_GRABIT_API_KEY ?? ''
+
 // Matches the dashboard KPI window — the table must describe "Last 30 days" too.
 const WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -59,9 +64,26 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   const res = await fetch(`${API_URL}${path}`, {
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    headers: authHeaders(),
   })
   if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`)
   return res.json() as Promise<T>
+}
+
+async function postJson<T>(path: string): Promise<T> {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    body: '{}',
+    signal: timeout,
+  })
+  if (!res.ok) throw new Error(`POST ${path} -> ${res.status}`)
+  return res.json() as Promise<T>
+}
+
+function authHeaders(): Record<string, string> {
+  return API_KEY ? { 'x-api-key': API_KEY, 'x-reviewer': 'ops-console' } : {}
 }
 
 export function fetchSummary(signal?: AbortSignal): Promise<Summary> {
@@ -86,4 +108,45 @@ export function fetchTimeline(jobId: string, signal?: AbortSignal): Promise<Time
   return getJson<{ timeline: TimelineEvent[] }>(`/jobs/${encodeURIComponent(jobId)}/timeline`, signal).then(
     (data) => data.timeline,
   )
+}
+
+// ---------------------------------------------------------------------------
+// HITL review queue (issue #34) — Screen C, /hitl routes
+// ---------------------------------------------------------------------------
+
+// GET /hitl?status=pending shape: raw prisma rows nested as-is (amount is a
+// Prisma Decimal and arrives as a JSON string; Number() it before fmtINR).
+export interface HitlTask {
+  id: string
+  recoveryJobId: string
+  reason: string
+  status: 'pending' | 'approved' | 'rejected'
+  reviewedBy: string | null
+  reviewedAt: string | null
+  notes: string | null
+  createdAt: string
+  recoveryJob: {
+    id: string
+    status: string
+    failureType: string
+    failedPayment: {
+      amount: string | number
+    }
+    decisions: Array<{
+      decisionType: string
+      confidence: number | null
+    }>
+  }
+}
+
+export function fetchHitlTasks(status: 'pending' | 'approved' | 'rejected', signal?: AbortSignal): Promise<HitlTask[]> {
+  return getJson<{ tasks: HitlTask[] }>(`/hitl?status=${status}`, signal).then((data) => data.tasks)
+}
+
+export function approveHitlTask(taskId: string): Promise<{ status: string }> {
+  return postJson<{ status: string }>(`/hitl/${encodeURIComponent(taskId)}/approve`)
+}
+
+export function rejectHitlTask(taskId: string): Promise<{ status: string }> {
+  return postJson<{ status: string }>(`/hitl/${encodeURIComponent(taskId)}/reject`)
 }

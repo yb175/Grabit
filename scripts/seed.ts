@@ -3,7 +3,8 @@
 // Idempotent demo data for an EMPTY database (local dev / buildathon judges):
 //   - 1 recovered case via one-click link (₹1,499) + ledger + message + audit
 //   - 1 hard failure stopped with no message (ledger = unrecovered)
-//   - 1 HITL pending high-value case (₹42,000 > ₹10k threshold)
+//   - 3 HITL pending cases for the reviewer inbox (high value, low
+//     confidence, mandate cancelled — each with an AI decision)
 //   - 1 active waiting follow-up (message sent, next attempt in the future)
 //
 // Every row uses a deterministic UUID derived from its semantic key (same
@@ -317,6 +318,23 @@ async function seedHitlHighValue() {
     },
   })
 
+  // AI decision that triggered the escalation — powers the inbox's
+  // "AI Decision / Confidence" columns (GET /hitl returns latest decision).
+  await prisma.agentDecision.upsert({
+    where: { id: stableUuid('seed:decision:hitl-high') },
+    update: { createdAt: now },
+    create: {
+      id: stableUuid('seed:decision:hitl-high'),
+      recoveryJobId: jobId,
+      decisionType: 'escalate_hitl',
+      explanation: "High-value case (₹42,000) exceeds HITL threshold of ₹10,000 — mandates revoked need human decision.",
+      confidence: 0.77,
+      modelVersion: 'seed',
+      actionPayload: { template: 'hitl_review_v1', urgency: 'high' },
+      createdAt: now,
+    },
+  })
+
   await prisma.auditLog.upsert({
     where: { id: stableUuid('seed:audit:hitl-high') },
     update: {},
@@ -332,6 +350,144 @@ async function seedHitlHighValue() {
   })
 
   return { jobId, amount: 42000 }
+}
+
+// ---------------------------------------------------------------------------
+// 3b. HITL pending low confidence: ₹3,400, AI said retry at only 0.58
+// ---------------------------------------------------------------------------
+async function seedHitlLowConfidence() {
+  const paymentId = 'pay_demo_hitl_lowconf'
+  const payment = await prisma.failedPayment.upsert({
+    where: { razorpayPaymentId: paymentId },
+    update: { isPaid: false },
+    create: {
+      razorpayPaymentId: paymentId,
+      razorpayOrderId: 'order_demo_hitl_lowconf',
+      amount: new Prisma.Decimal(3400),
+      currency: 'INR',
+      isPaid: false,
+      failureCode: 'debit_failed',
+      failureReason: 'Debit failed, insufficient funds at bank',
+      failureSource: 'payment',
+      paymentMethod: 'upi',
+      customerPhone: '+919876000555',
+      customerEmail: 'demo.customer5@example.com',
+      customerName: 'Ananya Iyer',
+      rawPayload: { entity: { id: paymentId, amount: 340000 } },
+    },
+  })
+
+  const jobId = stableUuid('seed:job:hitl-lowconf')
+  await prisma.recoveryJob.upsert({
+    where: { id: jobId },
+    update: { status: 'hitl', failureType: 'soft' },
+    create: {
+      id: jobId,
+      failedPaymentId: payment.id,
+      status: 'hitl',
+      failureType: 'soft',
+      followUpCount: 0,
+      maxFollowUps: 2,
+      priority: 60,
+    },
+  })
+
+  await prisma.hitlQueue.upsert({
+    where: { id: stableUuid('seed:hitl:lowconf') },
+    update: { status: 'pending', reviewedBy: null, reviewedAt: null, notes: null },
+    create: {
+      id: stableUuid('seed:hitl:lowconf'),
+      recoveryJobId: jobId,
+      reason: 'Low-confidence decision (AI confidence 0.58 < 0.70 threshold) — retry plan needs human check.',
+      status: 'pending',
+    },
+  })
+
+  await prisma.agentDecision.upsert({
+    where: { id: stableUuid('seed:decision:hitl-lowconf') },
+    update: {},
+    create: {
+      id: stableUuid('seed:decision:hitl-lowconf'),
+      recoveryJobId: jobId,
+      decisionType: 'retry',
+      explanation: 'Soft decline, low balance — retry recommended, but model confidence too low to act alone.',
+      confidence: 0.58,
+      modelVersion: 'seed',
+      actionPayload: { template: 'retry_v1', urgency: 'medium' },
+      createdAt: now,
+    },
+  })
+
+  return { jobId, amount: 3400 }
+}
+
+// ---------------------------------------------------------------------------
+// 3c. HITL pending mandate cancelled: ₹8,900, one-click link, high confidence
+// ---------------------------------------------------------------------------
+async function seedHitlMandateCancelled() {
+  const paymentId = 'pay_demo_hitl_mandate'
+  const payment = await prisma.failedPayment.upsert({
+    where: { razorpayPaymentId: paymentId },
+    update: { isPaid: false },
+    create: {
+      razorpayPaymentId: paymentId,
+      razorpayOrderId: 'order_demo_hitl_mandate',
+      amount: new Prisma.Decimal(8900),
+      currency: 'INR',
+      isPaid: false,
+      failureCode: 'mandate_revoked',
+      failureReason: 'UPI Autopay mandate revoked by customer',
+      failureSource: 'mandate',
+      paymentMethod: 'mandate',
+      customerPhone: '+919876000666',
+      customerEmail: 'demo.customer6@example.com',
+      customerName: 'Kiran Rao',
+      rawPayload: { entity: { id: paymentId, amount: 890000 } },
+    },
+  })
+
+  const jobId = stableUuid('seed:job:hitl-mandate')
+  await prisma.recoveryJob.upsert({
+    where: { id: jobId },
+    update: { status: 'hitl', failureType: 'autopay_cancelled' },
+    create: {
+      id: jobId,
+      failedPaymentId: payment.id,
+      status: 'hitl',
+      failureType: 'autopay_cancelled',
+      followUpCount: 0,
+      maxFollowUps: 2,
+      priority: 70,
+    },
+  })
+
+  await prisma.hitlQueue.upsert({
+    where: { id: stableUuid('seed:hitl:mandate') },
+    update: { status: 'pending', reviewedBy: null, reviewedAt: null, notes: null },
+    create: {
+      id: stableUuid('seed:hitl:mandate'),
+      recoveryJobId: jobId,
+      reason: 'Mandate cancelled by customer — sending a one-click recovery link needs human sign-off (policy).',
+      status: 'pending',
+    },
+  })
+
+  await prisma.agentDecision.upsert({
+    where: { id: stableUuid('seed:decision:hitl-mandate') },
+    update: {},
+    create: {
+      id: stableUuid('seed:decision:hitl-mandate'),
+      recoveryJobId: jobId,
+      decisionType: 'one_click',
+      explanation: 'Mandate cancelled — one-click recovery link re-establishes payment intent; send after human approval.',
+      confidence: 0.88,
+      modelVersion: 'seed',
+      actionPayload: { template: 'recovery_link_v2', urgency: 'high' },
+      createdAt: now,
+    },
+  })
+
+  return { jobId, amount: 8900 }
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +579,8 @@ async function main() {
   const recovered = await seedRecoveredOneClick()
   const hard = await seedHardStopped()
   const hitl = await seedHitlHighValue()
+  const hitlLowConf = await seedHitlLowConfidence()
+  const hitlMandate = await seedHitlMandateCancelled()
   const waiting = await seedWaitingFollowUp()
 
   const after = {
@@ -436,7 +594,9 @@ async function main() {
   const rows = [
     ['recovered one-click', recovered.publicId, `₹${recovered.amount}`],
     ['hard stopped (no message)', hard.publicId, `₹${hard.amount}`],
-    ['HITL pending high value', hitl.jobId, `₹${hitl.amount}`],
+    ['HITL high value', hitl.jobId, `₹${hitl.amount}`],
+    ['HITL low confidence', hitlLowConf.jobId, `₹${hitlLowConf.amount}`],
+    ['HITL mandate cancelled', hitlMandate.jobId, `₹${hitlMandate.amount}`],
     ['waiting follow-up', waiting.jobId, `₹${waiting.amount}`],
   ]
   const width = Math.max(...rows.map((r) => r[0].length))
