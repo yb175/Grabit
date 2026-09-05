@@ -3,8 +3,9 @@
 // Idempotent demo data for an EMPTY database (local dev / buildathon judges):
 //   - 1 recovered case via one-click link (₹1,499) + ledger + message + audit
 //   - 1 hard failure stopped with no message (ledger = unrecovered)
-//   - 3 HITL pending cases for the reviewer inbox (high value, low
-//     confidence, mandate cancelled — each with an AI decision)
+//   - 5 HITL pending cases for the reviewer inbox (high value, low
+//     confidence, mandate cancelled, ambiguous intent, timing delay)
+//     — each with an AI decision
 //   - 1 active waiting follow-up (message sent, next attempt in the future)
 //
 // Every row uses a deterministic UUID derived from its semantic key (same
@@ -322,13 +323,13 @@ async function seedHitlHighValue() {
   // "AI Decision / Confidence" columns (GET /hitl returns latest decision).
   await prisma.agentDecision.upsert({
     where: { id: stableUuid('seed:decision:hitl-high') },
-    update: { createdAt: now },
+    update: { createdAt: now, confidence: 0.82 },
     create: {
       id: stableUuid('seed:decision:hitl-high'),
       recoveryJobId: jobId,
       decisionType: 'escalate_hitl',
       explanation: "High-value case (₹42,000) exceeds HITL threshold of ₹10,000 — mandates revoked need human decision.",
-      confidence: 0.77,
+      confidence: 0.82,
       modelVersion: 'seed',
       actionPayload: { template: 'hitl_review_v1', urgency: 'high' },
       createdAt: now,
@@ -491,6 +492,144 @@ async function seedHitlMandateCancelled() {
 }
 
 // ---------------------------------------------------------------------------
+// 3d. HITL pending ambiguous customer intent: ₹6,200, AI said stop at 0.79
+// ---------------------------------------------------------------------------
+async function seedHitlAmbiguousIntent() {
+  const paymentId = 'pay_demo_hitl_ambiguous'
+  const payment = await prisma.failedPayment.upsert({
+    where: { razorpayPaymentId: paymentId },
+    update: { isPaid: false },
+    create: {
+      razorpayPaymentId: paymentId,
+      razorpayOrderId: 'order_demo_hitl_ambiguous',
+      amount: new Prisma.Decimal(6200),
+      currency: 'INR',
+      isPaid: false,
+      failureCode: 'payment_disputed',
+      failureReason: 'Customer disputed the charge — intent unclear',
+      failureSource: 'payment',
+      paymentMethod: 'card',
+      customerPhone: '+919876000777',
+      customerEmail: 'demo.customer7@example.com',
+      customerName: 'Farhan Ali',
+      rawPayload: { entity: { id: paymentId, amount: 620000 } },
+    },
+  })
+
+  const jobId = stableUuid('seed:job:hitl-ambiguous')
+  await prisma.recoveryJob.upsert({
+    where: { id: jobId },
+    update: { status: 'hitl', failureType: 'hard' },
+    create: {
+      id: jobId,
+      failedPaymentId: payment.id,
+      status: 'hitl',
+      failureType: 'hard',
+      followUpCount: 0,
+      maxFollowUps: 2,
+      priority: 40,
+    },
+  })
+
+  await prisma.hitlQueue.upsert({
+    where: { id: stableUuid('seed:hitl:ambiguous') },
+    update: { status: 'pending', reviewedBy: null, reviewedAt: null, notes: null },
+    create: {
+      id: stableUuid('seed:hitl:ambiguous'),
+      recoveryJobId: jobId,
+      reason: 'Ambiguous customer intent — charge disputed; recommend stopping outreach until a human confirms.',
+      status: 'pending',
+    },
+  })
+
+  await prisma.agentDecision.upsert({
+    where: { id: stableUuid('seed:decision:hitl-ambiguous') },
+    update: {},
+    create: {
+      id: stableUuid('seed:decision:hitl-ambiguous'),
+      recoveryJobId: jobId,
+      decisionType: 'stop',
+      explanation: 'Customer disputed the charge — sending recovery outreach could escalate; recommend human review before contacting.',
+      confidence: 0.79,
+      modelVersion: 'seed',
+      actionPayload: { template: 'no_outreach', urgency: 'low' },
+      createdAt: now,
+    },
+  })
+
+  return { jobId, amount: 6200 }
+}
+
+// ---------------------------------------------------------------------------
+// 3e. HITL pending timing delay: ₹2,200, AI wants salary-window resend
+// ---------------------------------------------------------------------------
+async function seedHitlTimingDelay() {
+  const paymentId = 'pay_demo_hitl_timing'
+  const payment = await prisma.failedPayment.upsert({
+    where: { razorpayPaymentId: paymentId },
+    update: { isPaid: false },
+    create: {
+      razorpayPaymentId: paymentId,
+      razorpayOrderId: 'order_demo_hitl_timing',
+      amount: new Prisma.Decimal(2200),
+      currency: 'INR',
+      isPaid: false,
+      failureCode: 'autopay_charge_failed',
+      failureReason: 'Autopay charge failed, transient bank issue',
+      failureSource: 'mandate',
+      paymentMethod: 'mandate',
+      customerPhone: '+919876000888',
+      customerEmail: 'demo.customer8@example.com',
+      customerName: 'Meera Nair',
+      rawPayload: { entity: { id: paymentId, amount: 220000 } },
+    },
+  })
+
+  const jobId = stableUuid('seed:job:hitl-timing')
+  await prisma.recoveryJob.upsert({
+    where: { id: jobId },
+    update: { status: 'hitl', failureType: 'autopay_failed' },
+    create: {
+      id: jobId,
+      failedPaymentId: payment.id,
+      status: 'hitl',
+      failureType: 'autopay_failed',
+      followUpCount: 0,
+      maxFollowUps: 2,
+      priority: 30,
+    },
+  })
+
+  await prisma.hitlQueue.upsert({
+    where: { id: stableUuid('seed:hitl:timing') },
+    update: { status: 'pending', reviewedBy: null, reviewedAt: null, notes: null },
+    create: {
+      id: stableUuid('seed:hitl:timing'),
+      recoveryJobId: jobId,
+      reason: 'Timing decision needs human sign-off — AI wants to resend during the salary window (next attempt at 10:00 tomorrow).',
+      status: 'pending',
+    },
+  })
+
+  await prisma.agentDecision.upsert({
+    where: { id: stableUuid('seed:decision:hitl-timing') },
+    update: {},
+    create: {
+      id: stableUuid('seed:decision:hitl-timing'),
+      recoveryJobId: jobId,
+      decisionType: 'delay',
+      explanation: 'Transient autopay failure near payroll cycle — delay outreach to salary window for higher success odds.',
+      confidence: 0.71,
+      modelVersion: 'seed',
+      actionPayload: { template: 'delayed_retry_v1', urgency: 'low' },
+      createdAt: now,
+    },
+  })
+
+  return { jobId, amount: 2200 }
+}
+
+// ---------------------------------------------------------------------------
 // 4. Active waiting follow-up: ₹599, message sent, next attempt tomorrow
 // ---------------------------------------------------------------------------
 async function seedWaitingFollowUp() {
@@ -581,6 +720,8 @@ async function main() {
   const hitl = await seedHitlHighValue()
   const hitlLowConf = await seedHitlLowConfidence()
   const hitlMandate = await seedHitlMandateCancelled()
+  const hitlAmbiguous = await seedHitlAmbiguousIntent()
+  const hitlTiming = await seedHitlTimingDelay()
   const waiting = await seedWaitingFollowUp()
 
   const after = {
@@ -597,6 +738,8 @@ async function main() {
     ['HITL high value', hitl.jobId, `₹${hitl.amount}`],
     ['HITL low confidence', hitlLowConf.jobId, `₹${hitlLowConf.amount}`],
     ['HITL mandate cancelled', hitlMandate.jobId, `₹${hitlMandate.amount}`],
+    ['HITL ambiguous intent', hitlAmbiguous.jobId, `₹${hitlAmbiguous.amount}`],
+    ['HITL timing delay', hitlTiming.jobId, `₹${hitlTiming.amount}`],
     ['waiting follow-up', waiting.jobId, `₹${waiting.amount}`],
   ]
   const width = Math.max(...rows.map((r) => r[0].length))
