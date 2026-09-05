@@ -20,6 +20,7 @@ import {
   type ResolvedPaymentStatus,
   type StoppingRuleDecision,
   type StoppingRulesConfig,
+  DEFAULT_STOPPING_RULES_CONFIG,
   paymentLinkService,
   PaymentLinkService,
 } from '@grabit/core'
@@ -666,25 +667,58 @@ export async function processRecoveryJob(
 
       } else if (agent.decision_type === 'escalate_hitl' || agent.should_escalate_hitl) {
         const hitlTaskId = stableUuid(`hitl-task:${job.id}`)
-        await prisma.hitlQueue.upsert({
-          where: { id: hitlTaskId },
-          create: {
-            id: hitlTaskId,
-            recoveryJobId: job.id,
-            reason: agent.explanation,
-            status: 'pending',
-          },
-          update: {},
-        })
-        await prisma.recoveryJob.update({
-          where: { id: job.id },
-          data: { status: 'hitl' },
-        })
-        await getQueue('hitl').add(
-          'review',
-          { recoveryJobId: job.id, reason: agent.explanation },
-          { jobId: stableUuid(`hitl-review:${job.id}`) },
-        )
+        const existingTask = job.hitlTasks[0] ?? (await prisma.hitlQueue.findUnique({ where: { id: hitlTaskId } }))
+        if (existingTask?.status === 'approved') {
+          // A human already approved this case — a fresh AI escalation must not
+          // flip the job back to `hitl` (the task uuid is stable, so the inbox
+          // would never show it again: an invisible zombie). Honours the
+          // approval: keep the case alive on the follow-up cadence instead.
+          // # ponytail: per-escalation follow-up inflation; revisit policy if
+          // the LLM routinely re-escalates approved high-value cases.
+          await prisma.$transaction([
+            prisma.recoveryJob.update({
+              where: { id: job.id },
+              data: {
+                status: 'waiting',
+                followUpCount: { increment: 1 },
+                nextAttemptAt: new Date(now.getTime() + DEFAULT_STOPPING_RULES_CONFIG.followUp1GapHours * 60 * 60 * 1000),
+              },
+            }),
+            prisma.auditLog.upsert({
+              where: { id: stableUuid(`audit:escalation_overridden:${job.id}`) },
+              create: {
+                id: stableUuid(`audit:escalation_overridden:${job.id}`),
+                entityType: 'recovery_jobs',
+                entityId: job.id,
+                action: 'escalation_overridden',
+                oldValue: { status: 'processing' },
+                newValue: { status: 'waiting', reason: 'AI re-escalated but the case was already approved by a human' },
+                performedBy: 'recovery_worker',
+              },
+              update: {},
+            }),
+          ])
+        } else {
+          await prisma.hitlQueue.upsert({
+            where: { id: hitlTaskId },
+            create: {
+              id: hitlTaskId,
+              recoveryJobId: job.id,
+              reason: agent.explanation,
+              status: 'pending',
+            },
+            update: {},
+          })
+          await prisma.recoveryJob.update({
+            where: { id: job.id },
+            data: { status: 'hitl' },
+          })
+          await getQueue('hitl').add(
+            'review',
+            { recoveryJobId: job.id, reason: agent.explanation },
+            { jobId: stableUuid(`hitl-review:${job.id}`) },
+          )
+        }
       }
       break
     }

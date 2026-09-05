@@ -340,8 +340,13 @@ export function evaluateStoppingRules(input: StoppingRulesInput): StoppingRuleDe
   }
 
   // 6. Rule 8: HITL Thresholds (High Value / Low Confidence / Ambiguous)
+  // SKIPPED when a human already approved the case: approval means these
+  // escalation gates (high value / low confidence / ambiguous) are satisfied,
+  // so the pipeline must resume (continue to the AI) instead of re-escalating
+  // to the reviewer in a loop.
+  const hitlCleared = input.hitlStatus === 'approved'
   // 6a. High Value
-  if (amount >= cfg.hitlAmountThresholdRupees) {
+  if (!hitlCleared && amount >= cfg.hitlAmountThresholdRupees) {
     return {
       action: 'hitl',
       rule: 'hitl_high_value',
@@ -351,7 +356,7 @@ export function evaluateStoppingRules(input: StoppingRulesInput): StoppingRuleDe
   }
 
   // 6b. Low AI Confidence
-  if (input.aiConfidence !== undefined && input.aiConfidence < cfg.minAiConfidence) {
+  if (!hitlCleared && input.aiConfidence !== undefined && input.aiConfidence < cfg.minAiConfidence) {
     return {
       action: 'hitl',
       rule: 'hitl_low_confidence',
@@ -361,7 +366,7 @@ export function evaluateStoppingRules(input: StoppingRulesInput): StoppingRuleDe
   }
 
   // 6c. Ambiguous Case
-  if (input.isAmbiguous === true) {
+  if (!hitlCleared && input.isAmbiguous === true) {
     return {
       action: 'hitl',
       rule: 'hitl_ambiguous',

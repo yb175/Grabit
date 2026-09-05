@@ -284,6 +284,26 @@ app.post('/:id/approve', async (c) => {
     throw transactionError
   }
 
+  // Resume the pipeline: when there was no drafted customer message to
+  // enqueue, the approved job would otherwise sit in `processing` limbo with
+  // nothing scheduled. Re-evaluate it now — the stopping rules skip HITL
+  // gates for approved tasks (see stopping-rules hitl_cleared) and the AI
+  // decides the next real action (draft + send, delay, stop…), which also
+  // advances the job out of `processing`.
+  if (!messageEnqueued) {
+    try {
+      await getQueue('recovery').add(
+        'evaluate-recovery',
+        { recoveryJobId: task.recoveryJobId },
+        { jobId: `hitl-approved-${task.recoveryJobId}`, removeOnComplete: true, removeOnFail: 100 },
+      )
+    } catch (queueErr) {
+      // Best-effort: the approval is already committed; a missed resume just
+      // leaves the case in processing until the next natural trigger.
+      console.error('[hitl] failed to enqueue resume after approval:', queueErr)
+    }
+  }
+
   return c.json({
     success: true,
     status: 'approved',

@@ -324,7 +324,14 @@ export async function processMessage(
   if (channel === 'email' && !data.toEmail) throw new Error('customer email is missing')
   if (channel === 'whatsapp' && !data.toPhone) throw new Error('customer phone is missing')
   if (channel === 'email' && (!data.paymentLinkUrl || data.paymentLinkUrl.includes('example.test'))) {
-    throw new Error('email requires a real payment link')
+    // Mock checkout URLs are NEVER emailed to customers — a dead link in a
+    // customer inbox is worse than no message. This guard is why every
+    // one_click send fails under MESSAGE_CHANNEL=email without a REAL
+    // Razorpay payment link (fresh test keys + tool enabled).
+    throw new Error(
+      'email requires a real payment link: mock example.test links are never emailed — set ' +
+      'RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET (test mode) + RAZORPAY_PAYMENT_LINK_ENABLED=true, or use MESSAGE_CHANNEL=mock',
+    )
   }
 
   // Render the canonical copy once and persist exactly what the customer receives.
@@ -406,6 +413,7 @@ export async function processMessage(
   const bumpJob = () => prisma.recoveryJob.updateMany({
     where: { id: job.id, followUpCount: attempt },
     data: {
+      status: 'waiting',
       followUpCount: nextFollowUpCount,
       nextAttemptAt: new Date(now.getTime() + gapHours * 60 * 60 * 1000),
     },

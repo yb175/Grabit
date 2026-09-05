@@ -9,7 +9,8 @@
     "db:seed": "node --env-file-if-exists=.env --import tsx scripts/seed.ts",
     "dev:api": "pnpm --filter @grabit/api dev",
     "dev:worker": "pnpm --filter @grabit/worker dev",
-    "test": "node --env-file-if-exists=.env --import tsx --test tests/*.test.ts"
+    "test": "node --env-file-if-exists=.env --import tsx --test tests/*.test.ts",
+    "fire:webhook": "node --env-file-if-exists=.env --import tsx scripts/fire-webhook.ts"
   },
   "devDependencies": {
     "@grabit/config": "workspace:*",
