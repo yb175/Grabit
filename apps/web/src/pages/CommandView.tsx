@@ -186,6 +186,7 @@ export function CommandView() {
                 <th>Status</th>
                 <th className="num">Recovered ₹</th>
                 <th>Recovered At</th>
+                <th>Next follow-up</th>
                 <th className="action-col">View</th>
               </tr>
             </thead>
@@ -211,6 +212,9 @@ export function CommandView() {
                     <td>
                       <span className="skeleton skeleton-text skeleton-date" />
                     </td>
+                    <td>
+                      <span className="skeleton skeleton-text skeleton-date" />
+                    </td>
                     <td className="action-col">
                       <span className="skeleton skeleton-text skeleton-action" />
                     </td>
@@ -218,7 +222,7 @@ export function CommandView() {
                 ))}
               {!isJobsLoading && list.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="empty-row">
+                  <td colSpan={8} className="empty-row">
                     No recovery jobs yet — run <code>pnpm db:seed</code> or send a webhook.
                   </td>
                 </tr>
@@ -239,6 +243,9 @@ export function CommandView() {
                       </td>
                       <td className="mono num">{recovered ? fmtINR(Number(recovered.amount)) : '—'}</td>
                       <td className="mono">{fmtDateTime(recovered?.recoveredAt ?? null)}</td>
+                      <td className="mono" title={job.nextAttemptAt ?? undefined}>
+                        {job.status === 'waiting' ? fmtDateTime(job.nextAttemptAt) : '—'}
+                      </td>
                       <td className="action-col">
                         <a className="view-link" href={jobUrl(job.id)}>
                           View

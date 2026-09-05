@@ -46,6 +46,7 @@ export interface Job {
   updatedAt: string
   followUpCount: number
   maxFollowUps: number
+  nextAttemptAt: string | null
   paidAt: string | null
   isPaid: boolean
   ledger: LedgerEntry[]
