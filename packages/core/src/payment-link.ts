@@ -78,9 +78,9 @@ export class PaymentLinkService {
   private fetchFn: typeof fetch
 
   constructor(options: PaymentLinkServiceOptions = {}) {
-    this.keyId = options.keyId ?? config.razorpayKeyId
-    this.keySecret = options.keySecret ?? config.razorpayKeySecret
-    this.enabled = options.enabled ?? config.razorpayPaymentLinkEnabled
+    this.keyId = Object.prototype.hasOwnProperty.call(options, 'keyId') ? options.keyId : config.razorpayKeyId
+    this.keySecret = Object.prototype.hasOwnProperty.call(options, 'keySecret') ? options.keySecret : config.razorpayKeySecret
+    this.enabled = Object.prototype.hasOwnProperty.call(options, 'enabled') ? Boolean(options.enabled) : config.razorpayPaymentLinkEnabled
     this.baseUrl = (options.baseUrl ?? 'https://api.razorpay.com').replace(/\/+$/, '')
     this.fetchFn = options.fetchFn ?? globalThis.fetch
   }

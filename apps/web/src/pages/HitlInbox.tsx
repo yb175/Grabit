@@ -18,7 +18,6 @@ export function HitlInbox() {
     let interval: number | undefined
     let cancelled = false
     let inFlight: AbortController | null = null
-    const gen = pollGen // capture current generation
 
     const poll = async () => {
       if (inFlight) return
