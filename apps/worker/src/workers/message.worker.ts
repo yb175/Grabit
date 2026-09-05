@@ -272,8 +272,12 @@ export async function processMessage(
         : DEFAULT_STOPPING_RULES_CONFIG.followUp2GapHours
       try {
         await prisma.recoveryJob.updateMany({
-          where: { id: job.id, followUpCount: attempt },
+          // Guard: only advance non-terminal jobs. A concurrent recovery
+          // or HITL close (recovered/rejected/unrecovered) must not be
+          // overwritten by a crashed-and-replayed message bump.
+          where: { id: job.id, followUpCount: attempt, status: { in: ['processing', 'waiting', 'hitl', 'pending'] } },
           data: {
+            status: 'waiting',
             followUpCount: attempt + 1,
             nextAttemptAt: new Date(now.getTime() + gapHours * 60 * 60 * 1000),
           },
@@ -411,7 +415,9 @@ export async function processMessage(
     data: { status: 'sent', providerMessageId: result.providerMessageId, sentAt: now, errorMessage: null },
   })
   const bumpJob = () => prisma.recoveryJob.updateMany({
-    where: { id: job.id, followUpCount: attempt },
+    // Guard: only advance non-terminal jobs so an in-flight message send
+    // cannot resurrect a job that recovery or HITL already closed.
+    where: { id: job.id, followUpCount: attempt, status: { in: ['processing', 'waiting', 'hitl', 'pending'] } },
     data: {
       status: 'waiting',
       followUpCount: nextFollowUpCount,

@@ -59,7 +59,17 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
 
   // --- Handle payment success / capture events idempotently ---
   if (isPaymentSuccessEvent(event)) {
-    const existing = await prisma.failedPayment.findUnique({
+    const notes = payment?.notes as Record<string, string> | undefined
+    const noteFailedPaymentId = notes?.failed_payment_id
+    const noteRecoveryJobId = notes?.recovery_job_id
+    const orderId = payment?.order_id ?? null
+
+    // Match key cascade:
+    // 1. Direct match on razorpayPaymentId
+    // 2. Match via note failed_payment_id (from payment link notes)
+    // 3. Match via note recovery_job_id
+    // 4. Match via razorpayOrderId
+    let existing = await prisma.failedPayment.findUnique({
       where: { razorpayPaymentId },
       include: {
         recoveryJobs: {
@@ -69,8 +79,50 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
       },
     })
 
+    if (!existing && noteFailedPaymentId) {
+      existing = await prisma.failedPayment.findUnique({
+        where: { id: noteFailedPaymentId },
+        include: {
+          recoveryJobs: {
+            where: { status: { not: 'recovered' } },
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+      })
+    }
+
+    if (!existing && noteRecoveryJobId) {
+      const job = await prisma.recoveryJob.findUnique({
+        where: { id: noteRecoveryJobId },
+        include: { failedPayment: true },
+      })
+      if (job) {
+        existing = await prisma.failedPayment.findUnique({
+          where: { id: job.failedPaymentId },
+          include: {
+            recoveryJobs: {
+              where: { status: { not: 'recovered' } },
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        })
+      }
+    }
+
+    if (!existing && orderId) {
+      existing = await prisma.failedPayment.findFirst({
+        where: { razorpayOrderId: orderId },
+        include: {
+          recoveryJobs: {
+            where: { status: { not: 'recovered' } },
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+      })
+    }
+
     if (!existing) {
-      console.log(`[ingest] ${event} for untracked payment ${razorpayPaymentId} — ignored`)
+      console.log(`[ingest] ${event} for untracked payment ${razorpayPaymentId} (order: ${orderId ?? 'none'}) — ignored`)
       return { outcome: 'ignored', failedPaymentId: null, recoveryJobId: null, failureType: null }
     }
 
@@ -93,10 +145,16 @@ export async function processIngestEvent(data: IngestJobData): Promise<IngestRes
     }
 
     console.log(`[ingest] ${event} marked payment ${existing.id} (${razorpayPaymentId}) as paid`)
+    const activeJob = existing.recoveryJobs[0]
+    if (activeJob) {
+      console.log(`[ingest] ${event} ${razorpayPaymentId} — job ${activeJob.id} found, enqueuing recovery re-evaluation`)
+    } else {
+      console.log(`[ingest] ${event} ${razorpayPaymentId} — no active recovery job, skipping re-evaluation`)
+    }
     return {
       outcome: 'updated',
       failedPaymentId: existing.id,
-      recoveryJobId: existing.recoveryJobs[0]?.id ?? null,
+      recoveryJobId: activeJob?.id ?? null,
       failureType: null,
     }
   }

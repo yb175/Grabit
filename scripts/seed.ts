@@ -272,7 +272,7 @@ async function seedHitlHighValue() {
   const paymentId = 'pay_demo_hitl_high'
   const payment = await prisma.failedPayment.upsert({
     where: { razorpayPaymentId: paymentId },
-    update: { isPaid: false },
+    update: { isPaid: false, paidAt: null },
     create: {
       razorpayPaymentId: paymentId,
       razorpayOrderId: 'order_demo_hitl_high',
@@ -331,7 +331,13 @@ async function seedHitlHighValue() {
       explanation: "High-value case (₹42,000) exceeds HITL threshold of ₹10,000 — mandates revoked need human decision.",
       confidence: 0.82,
       modelVersion: 'seed',
-      actionPayload: { template: 'hitl_review_v1', urgency: 'high' },
+      actionPayload: {
+        template: 'hitl_review_v1',
+        urgency: 'high',
+        customer_message:
+          'Hi, your payment of ₹42,000 could not be processed. ' +
+          'Our team has reviewed this case and will be in touch shortly.',
+      },
       createdAt: now,
     },
   })
@@ -360,7 +366,7 @@ async function seedHitlLowConfidence() {
   const paymentId = 'pay_demo_hitl_lowconf'
   const payment = await prisma.failedPayment.upsert({
     where: { razorpayPaymentId: paymentId },
-    update: { isPaid: false },
+    update: { isPaid: false, paidAt: null },
     create: {
       razorpayPaymentId: paymentId,
       razorpayOrderId: 'order_demo_hitl_lowconf',
@@ -414,7 +420,16 @@ async function seedHitlLowConfidence() {
       explanation: 'Soft decline, low balance — retry recommended, but model confidence too low to act alone.',
       confidence: 0.58,
       modelVersion: 'seed',
-      actionPayload: { template: 'retry_v1', urgency: 'medium' },
+      // customer_message required so approve → /hitl/:id/approve enqueues
+      // the message worker (recipient && customerMessage guard in hitl.ts).
+      actionPayload: {
+        template: 'retry_v1',
+        urgency: 'medium',
+        customer_message:
+          'Hi Ananya, your payment of ₹3,400 could not be processed. ' +
+          'Our team reviewed it and recommends retrying. ' +
+          'Please use the link below to complete your payment.',
+      },
       createdAt: now,
     },
   })
@@ -429,7 +444,7 @@ async function seedHitlMandateCancelled() {
   const paymentId = 'pay_demo_hitl_mandate'
   const payment = await prisma.failedPayment.upsert({
     where: { razorpayPaymentId: paymentId },
-    update: { isPaid: false },
+    update: { isPaid: false, paidAt: null },
     create: {
       razorpayPaymentId: paymentId,
       razorpayOrderId: 'order_demo_hitl_mandate',
@@ -483,7 +498,13 @@ async function seedHitlMandateCancelled() {
       explanation: 'Mandate cancelled — one-click recovery link re-establishes payment intent; send after human approval.',
       confidence: 0.88,
       modelVersion: 'seed',
-      actionPayload: { template: 'recovery_link_v2', urgency: 'high' },
+      actionPayload: {
+        template: 'recovery_link_v2',
+        urgency: 'high',
+        customer_message:
+          'Hi Kiran, your UPI Autopay mandate was cancelled. ' +
+          'Use the link below to re-authorise and complete your payment of ₹8,900 — it only takes a moment.',
+      },
       createdAt: now,
     },
   })
@@ -498,7 +519,7 @@ async function seedHitlAmbiguousIntent() {
   const paymentId = 'pay_demo_hitl_ambiguous'
   const payment = await prisma.failedPayment.upsert({
     where: { razorpayPaymentId: paymentId },
-    update: { isPaid: false },
+    update: { isPaid: false, paidAt: null },
     create: {
       razorpayPaymentId: paymentId,
       razorpayOrderId: 'order_demo_hitl_ambiguous',
@@ -552,7 +573,10 @@ async function seedHitlAmbiguousIntent() {
       explanation: 'Customer disputed the charge — sending recovery outreach could escalate; recommend human review before contacting.',
       confidence: 0.79,
       modelVersion: 'seed',
-      actionPayload: { template: 'no_outreach', urgency: 'low' },
+      // stop decision: approve → no customer_message → approve route re-evaluates
+      // the job (no-message path) and stopping rules will close it as unrecovered
+      // (hard failure type). This is the correct terminal outcome for a disputed charge.
+      actionPayload: { template: 'no_outreach', urgency: 'low', customer_message: '' },
       createdAt: now,
     },
   })
@@ -567,7 +591,7 @@ async function seedHitlTimingDelay() {
   const paymentId = 'pay_demo_hitl_timing'
   const payment = await prisma.failedPayment.upsert({
     where: { razorpayPaymentId: paymentId },
-    update: { isPaid: false },
+    update: { isPaid: false, paidAt: null },
     create: {
       razorpayPaymentId: paymentId,
       razorpayOrderId: 'order_demo_hitl_timing',
@@ -621,7 +645,9 @@ async function seedHitlTimingDelay() {
       explanation: 'Transient autopay failure near payroll cycle — delay outreach to salary window for higher success odds.',
       confidence: 0.71,
       modelVersion: 'seed',
-      actionPayload: { template: 'delayed_retry_v1', urgency: 'low' },
+      // delay decision: approve → no customer_message → approve route re-evaluates
+      // the job (no-message path) and stopping rules will schedule the delay.
+      actionPayload: { template: 'delayed_retry_v1', urgency: 'low', customer_message: '' },
       createdAt: now,
     },
   })

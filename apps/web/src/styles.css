@@ -916,24 +916,24 @@ code {
 }
 
 .btn-approve {
-  color: #ffffff;
-  background: #111827;
-  border: 1px solid #111827;
+  color: var(--surface);
+  background: var(--text);
+  border: 1px solid var(--text);
 }
 
 .btn-approve:hover:not(:disabled) {
-  background: #1f2937;
+  background: var(--grey-800, #1f2937);
 }
 
 .btn-reject {
   color: var(--text);
-  background: #ffffff;
+  background: var(--surface);
   border: 1px solid var(--border);
 }
 
 .btn-reject:hover:not(:disabled) {
-  background: #f9fafb;
-  border-color: #9ca3af;
+  background: var(--bg);
+  border-color: var(--faint);
 }
 
 .btn-approve:disabled,

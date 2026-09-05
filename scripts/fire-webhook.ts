@@ -115,8 +115,13 @@ const entity = {
 
 // Razorpay sends subscription/mandate events with a subscription entity that
 // carries payment_id — the ingest worker uses it for dedupe + classification.
+// Include payment.entity alongside so processIngestEvent can read amount/email
+// for the recovery message (mandate/halted/cancelled events need a recipient).
 const payload = isSubscription
-  ? { subscription: { entity: { id: `sub_${id.slice(0, 14)}`, payment_id: paymentId, status: 'halted', plan_id: 'plan_demo' } } }
+  ? {
+      subscription: { entity: { id: `sub_${id.slice(0, 14)}`, payment_id: paymentId, status: 'halted', plan_id: 'plan_demo' } },
+      payment: { entity },
+    }
   : { payment: { entity } }
 
 const body = JSON.stringify({

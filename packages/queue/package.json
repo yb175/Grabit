@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "dependencies": {
     "@grabit/config": "workspace:*",
-    "bullmq": "^5.30.0"
+    "bullmq": "^5.30.0",
+    "ioredis": "^5.11.1"
   }
 }

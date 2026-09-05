@@ -1,7 +1,11 @@
 // Command View API client — @grabit/api over HTTP.
 // The web app polls these endpoints every few seconds; see pages/CommandView.
 
-const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3100'
+export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3100'
+
+export function dashboardEventsUrl(): string {
+  return `${API_URL}/dashboard/events`
+}
 
 // /hitl/* is the one route group behind x-api-key (v0 auth, fail-closed). The
 // browser reads the demo key from VITE_GRABIT_API_KEY; unset => requests 401

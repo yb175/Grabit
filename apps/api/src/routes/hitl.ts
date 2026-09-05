@@ -8,6 +8,7 @@
 import { Hono } from 'hono'
 import { prisma, type HitlStatus } from '@grabit/db'
 import { config } from '@grabit/config'
+import { paymentLinkService } from '@grabit/core'
 import { getQueue } from '@grabit/queue'
 
 const app = new Hono()
@@ -167,17 +168,52 @@ app.post('/:id/approve', async (c) => {
   // via alreadyProcessed. The deterministic jobId keeps retries duplicate-safe.
   const latestDecision = task.recoveryJob.decisions[0]
   const actionPayload = latestDecision?.actionPayload as Record<string, unknown> | null
+  const payment = task.recoveryJob.failedPayment
+  // HITL approval is an explicit approval to send the recovery copy. Some
+  // escalation decisions intentionally have no drafted customer_message, so
+  // use the same payment_failed_2-style fallback as one_click instead of
+  // silently converting approval into a no-op.
   const customerMessage =
     body.messageBody ||
-    (typeof actionPayload?.customer_message === 'string' ? actionPayload.customer_message : '')
+    (typeof actionPayload?.customer_message === 'string' ? actionPayload.customer_message : '') ||
+    `Hi ${payment?.customerName ?? 'there'}, your payment of ₹${payment?.amount?.toString() ?? ''} could not be processed. Please use the payment link to complete your payment.`
 
-  const payment = task.recoveryJob.failedPayment
   // Channel-aware recipient: email channel needs customer_email, WhatsApp needs phone.
   const recipient = config.messageChannel === 'email' ? payment?.customerEmail : payment?.customerPhone
 
+  let paymentLinkId = typeof actionPayload?.payment_link_id === 'string' ? actionPayload.payment_link_id : task.recoveryJob.paymentLinkId
+  let paymentLinkUrl = typeof actionPayload?.payment_link_url === 'string' ? actionPayload.payment_link_url : task.recoveryJob.paymentLinkUrl
+
+  // Escalated HITL jobs often have no link because the AI stopped before the
+  // one_click branch. Create the link before queueing the message so approval
+  // follows the exact same path as a one_click recovery.
+  if (recipient && (!paymentLinkId || !paymentLinkUrl)) {
+    const link = await paymentLinkService.create({
+      amount: payment.amount,
+      currency: payment.currency,
+      referenceId: task.recoveryJobId,
+      description: payment.failureReason ?? 'Payment recovery',
+      customer: {
+        name: payment.customerName,
+        contact: payment.customerPhone,
+        email: payment.customerEmail,
+      },
+      notes: {
+        recovery_job_id: task.recoveryJobId,
+        failed_payment_id: payment.id,
+      },
+    })
+    paymentLinkId = link.id
+    paymentLinkUrl = link.shortUrl
+    await prisma.recoveryJob.update({
+      where: { id: task.recoveryJobId },
+      data: { paymentLinkId, paymentLinkUrl },
+    })
+  }
+
   let messageEnqueued = false
   let enqueuedMessageJob: { remove(): Promise<void> } | null = null
-  if (recipient && customerMessage) {
+  if (recipient) {
     try {
       const messageQueue = getQueue('message')
       enqueuedMessageJob = await messageQueue.add(
@@ -188,8 +224,8 @@ app.post('/:id/approve', async (c) => {
           toPhone: payment?.customerPhone ?? undefined,
           toEmail: payment?.customerEmail ?? undefined,
           messageBody: customerMessage,
-          paymentLinkId: typeof actionPayload?.payment_link_id === 'string' ? actionPayload.payment_link_id : undefined,
-          paymentLinkUrl: typeof actionPayload?.payment_link_url === 'string' ? actionPayload.payment_link_url : undefined,
+          paymentLinkId: paymentLinkId ?? undefined,
+          paymentLinkUrl: paymentLinkUrl ?? undefined,
           templateVars: {
             1: payment?.customerName ?? 'there',
             2: `₹${payment?.amount?.toString() ?? ''}`,
@@ -298,9 +334,21 @@ app.post('/:id/approve', async (c) => {
         { jobId: `hitl-approved-${task.recoveryJobId}`, removeOnComplete: true, removeOnFail: 100 },
       )
     } catch (queueErr) {
-      // Best-effort: the approval is already committed; a missed resume just
-      // leaves the case in processing until the next natural trigger.
-      console.error('[hitl] failed to enqueue resume after approval:', queueErr)
+      // Redis/BullMQ unavailable after the DB commit. The approval is durable
+      // but the resume is not. Return a 502 so the caller knows to retry the
+      // approve endpoint (idempotent: alreadyProcessed path) which will
+      // re-enqueue the resume without flipping the status again.
+      console.error('[hitl] failed to enqueue resume after approval; caller should retry:', queueErr)
+      return c.json(
+        {
+          error: 'resume_enqueue_failed',
+          message: 'Approval committed but the pipeline resume could not be queued — retry POST /hitl/:id/approve to re-enqueue.',
+          status: 'approved',
+          task: updatedTask,
+          messageEnqueued: false,
+        },
+        502,
+      )
     }
   }
 
