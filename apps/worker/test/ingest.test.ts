@@ -192,6 +192,47 @@ test('duplicate payment.captured is idempotent and skipped', async () => {
   assert.equal(count, 1)
 })
 
+test('payment.captured matching via notes.failed_payment_id updates payment and job', async () => {
+  const id = uniqId()
+  const failResult = await processIngestEvent({
+    event: 'payment.failed',
+    payload: paymentFailedEvent(id).payload,
+    receivedAt: new Date().toISOString(),
+  })
+  assert.equal(failResult.outcome, 'created')
+
+  // Capture arrives with a different payment ID (e.g. newly created via payment link checkout)
+  // but contains notes.failed_payment_id
+  const newPaymentId = `pay_link_checkout_${Date.now()}`
+  const capResult = await processIngestEvent({
+    event: 'payment.captured',
+    payload: {
+      payment: {
+        entity: {
+          id: newPaymentId,
+          amount: 100000,
+          currency: 'INR',
+          status: 'captured',
+          notes: {
+            failed_payment_id: failResult.failedPaymentId,
+            recovery_job_id: failResult.recoveryJobId,
+          },
+        },
+      },
+    },
+    receivedAt: new Date().toISOString(),
+  })
+
+  assert.equal(capResult.outcome, 'updated')
+  assert.equal(capResult.failedPaymentId, failResult.failedPaymentId)
+  assert.equal(capResult.recoveryJobId, failResult.recoveryJobId)
+
+  const fp = await prisma.failedPayment.findUniqueOrThrow({
+    where: { id: failResult.failedPaymentId! },
+  })
+  assert.equal(fp.isPaid, true)
+})
+
 test('payment.captured for unknown payment is safely ignored', async () => {
   const unknownId = `pay_unknown_${Date.now()}`
   const result = await processIngestEvent({
