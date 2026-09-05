@@ -1,8 +1,12 @@
 {
   "name": "grabit",
   "private": true,
+  "engines": {
+    "node": ">=22.9"
+  },
   "scripts": {
     "demo:batch": "node --env-file-if-exists=.env --import tsx scripts/demo-batch.ts",
+    "db:seed": "node --env-file-if-exists=.env --import tsx scripts/seed.ts",
     "dev:api": "pnpm --filter @grabit/api dev",
     "dev:worker": "pnpm --filter @grabit/worker dev",
     "test": "node --env-file-if-exists=.env --import tsx --test tests/*.test.ts"

@@ -9,6 +9,7 @@
 //  - /audit/*    : audit trail of every automated decision
 // plus GET /health (below) used by docker-compose, k8s and humans.
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
 import { prisma } from '@grabit/db'
 import webhooks from './routes/webhooks.js'
 import jobs from './routes/jobs.js'
@@ -18,6 +19,19 @@ import ledger from './routes/ledger.js'
 import audit from './routes/audit.js'
 
 export const app = new Hono()
+
+// Browser origins allowed to read the API (the Command View web app).
+// No wildcard: /jobs carries customer contact + payment metadata, so only the
+// configured dashboard origins may call it cross-origin. Override via
+// CORS_ORIGINS (comma-separated); defaults cover the vite dev server.
+const CORS_ORIGINS = (
+  process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173'
+)
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean)
+
+app.use('*', cors({ origin: CORS_ORIGINS }))
 
 // Health check: proves both the API and the Postgres connection are alive.
 app.get('/health', async (c) => {
