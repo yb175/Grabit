@@ -21,6 +21,12 @@
   --amber-bg: #fef3c7;
   --blue: #1d4ed8;
   --blue-bg: #dbeafe;
+
+  /* Timeline inspector aliases */
+  --line: var(--border);
+  --surface-2: var(--grey-bg);
+  --ink: var(--text);
+  --accent: var(--brand);
 }
 
 * {

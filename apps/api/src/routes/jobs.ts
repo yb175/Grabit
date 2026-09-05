@@ -394,7 +394,7 @@ app.get('/:id/timeline', async (c) => {
       description: 'Razorpay payment link',
       performedBy: 'payment_link_service',
       timestamp: oneClickDecision.createdAt.toISOString(),
-      data: { paymentLinkId: job.paymentLinkId },
+      data: { action: 'payment_link_created', paymentLinkId: job.paymentLinkId },
     })
   }
 

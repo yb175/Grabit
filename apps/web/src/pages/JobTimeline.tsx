@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { fetchJob, fetchTimeline, type Job, type TimelineEvent } from '../api'
 import { fmtINR } from '../format'
 
-type StageId = 'ingested' | 'created' | 'decision' | 'link' | 'message' | 'outcome' | 'ledger' | 'audit'
+type StageId = 'ingested' | 'created' | 'decision' | 'hitl' | 'link' | 'message' | 'outcome' | 'ledger' | 'audit'
 type Stage = { id: StageId; title: string; event: TimelineEvent; tone: 'system' | 'agent' | 'success' | 'stopped' }
 
 const DEMO_JOBS = [
@@ -22,6 +22,7 @@ function buildStages(events: TimelineEvent[]): Stage[] {
   const ingested = first(e => e.type === 'ingested')
   const created = first(e => e.title.toLowerCase().includes('job created'))
   const decision = first(e => e.type === 'agent_decision' || (e.type === 'rule_decision' && !isStop(e)))
+  const hitl = first(e => e.type === 'hitl')
   const link = first(e => e.type === 'action' && e.data?.action === 'payment_link_created')
   const message = first(e => e.type === 'message')
   const outcome = first(e => e.type === 'captured') ?? first(isStop)
@@ -31,6 +32,7 @@ function buildStages(events: TimelineEvent[]): Stage[] {
   if (ingested) add('ingested', 'Ingested', ingested, 'system')
   if (created) add('created', 'Job created', created, 'system')
   if (decision) add('decision', 'AI / rule decision', decision, 'agent')
+  if (hitl) add('hitl', 'HITL review', hitl, 'agent')
   if (link) add('link', 'Payment link', link, 'system')
   if (message) add('message', 'Message sent', message, 'agent')
   if (outcome) add('outcome', outcome.type === 'captured' ? 'Captured' : 'Stopped', outcome, outcome.type === 'captured' ? 'success' : 'stopped')
@@ -68,9 +70,10 @@ function DetailPanel({ stage, job }: { stage?: Stage; job: Job }) {
   const data = event.data ?? {}
   const rows: [string, unknown][] = []
 
-  if (stage.id === 'ingested') rows.push(['Payment ID', data.paymentId], ['Amount', typeof data.amount === 'number' ? fmtINR(data.amount) : undefined], ['Failure type', data.failureType], ['Failure code', data.failureCode], ['Reason', data.failureReason])
+  if (stage.id === 'ingested') rows.push(['Payment ID', data.razorpayPaymentId], ['Amount', typeof data.amount === 'number' ? fmtINR(data.amount) : undefined], ['Failure type', data.failureType], ['Failure code', data.failureCode], ['Reason', data.failureReason])
   if (stage.id === 'created') rows.push(['Job ID', job.id], ['Created at', eventTime(event.timestamp)])
   if (stage.id === 'decision') rows.push(['Decision type', data.decisionType], ['Confidence', data.confidence], ['Explanation', data.explanation], ['Failure type', data.failureType])
+  if (stage.id === 'hitl') rows.push(['Task ID', data.hitlTaskId], ['Status', data.status], ['Reviewed by', data.reviewedBy], ['Notes', data.notes])
   if (stage.id === 'link') rows.push(['URL host', hostOnly(job.paymentLinkUrl)], ['Link ID', data.paymentLinkId])
   if (stage.id === 'message') rows.push(['Channel', data.channel], ['Template', data.templateName], ['Status', data.status], ['Sent at', eventTime(event.timestamp)])
   if (stage.id === 'outcome') rows.push(['Why', isStop(event) ? 'Stopping rule: no retry or outreach' : 'Payment captured; recovery stop'], ['isPaid', job.isPaid], ['No message proof', isStop(event) ? job.messages.length === 0 ? 'No message event' : '—' : undefined])
@@ -94,17 +97,26 @@ export function JobTimeline({ requestedId }: { requestedId?: string }) {
   const [events, setEvents] = useState<TimelineEvent[]>([])
   const [selected, setSelected] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const activeId = requestedId && DEMO_JOBS.some(item => item.id === requestedId) ? requestedId : DEMO_JOBS[0].id
+  const activeId = requestedId || DEMO_JOBS[0].id
 
   useEffect(() => {
     setSelected(null); setError(null)
-    Promise.all([fetchJob(activeId), fetchTimeline(activeId)]).then(([nextJob, nextEvents]) => { setJob(nextJob); setEvents(nextEvents) }).catch(err => setError(err instanceof Error ? err.message : 'Unable to load timeline'))
+    const controller = new AbortController()
+    Promise.all([fetchJob(activeId, controller.signal), fetchTimeline(activeId, controller.signal)])
+      .then(([nextJob, nextEvents]) => {
+        if (controller.signal.aborted) return
+        setJob(nextJob); setEvents(nextEvents)
+      })
+      .catch(err => {
+        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Unable to load timeline')
+      })
+    return () => controller.abort()
   }, [activeId])
 
   const stages = useMemo(() => buildStages(events), [events])
   const current = selected === null ? undefined : stages[selected]
 
-  return <main className="page timeline-page">
+  return <section className="page timeline-page">
     <div className="page-heading"><div><p className="eyebrow">Evidence trail / recovery execution</p><h1>Recovery Job Timeline</h1><p className="page-subtitle">Select a stage to inspect the operational record.</p></div></div>
     <div className="job-tabs" role="tablist">{DEMO_JOBS.map(item => <button key={item.id} className={`job-tab ${activeId === item.id ? 'active' : ''}`} onClick={() => { window.location.hash = `/jobs/${item.id}` }} role="tab" aria-selected={activeId === item.id}><span className="mono">{item.id}</span><strong>{item.label}</strong></button>)}</div>
     {error && <div className="error-state"><strong>Could not load job</strong><span>{error}</span></div>}
@@ -115,5 +127,5 @@ export function JobTimeline({ requestedId }: { requestedId?: string }) {
       </nav>
       <article className="timeline-detail"><DetailPanel stage={current} job={job} /></article>
     </section>}
-  </main>
+  </section>
 }

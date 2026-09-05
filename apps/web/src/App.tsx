@@ -11,7 +11,12 @@ interface Route {
 function readRoute(): Route {
   const raw = window.location.hash.replace(/^#/, '') || window.location.pathname
   const match = raw.match(/^\/jobs\/([^/?#]+)\/?$/)
-  return match ? { kind: 'job', jobId: decodeURIComponent(match[1]) } : { kind: 'command' }
+  if (!match) return { kind: 'command' }
+  try {
+    return { kind: 'job', jobId: decodeURIComponent(match[1]) }
+  } catch {
+    return { kind: 'command' }
+  }
 }
 
 function Header({ route }: { route: Route }) {
