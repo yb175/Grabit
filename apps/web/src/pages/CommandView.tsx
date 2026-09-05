@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchSummary, fetchJobs, timelineUrl, type Summary, type Job, type LedgerEntry } from '../api'
+import { fetchSummary, fetchJobs, jobUrl, type Summary, type Job, type LedgerEntry } from '../api'
 import { fmtINR, fmtDateTime, shortId, failureLabel } from '../format'
 import { KpiCard } from '../components/KpiCard'
 
@@ -232,7 +232,7 @@ export function CommandView() {
                       <td className="mono num">{recovered ? fmtINR(Number(recovered.amount)) : '—'}</td>
                       <td className="mono">{fmtDateTime(recovered?.recoveredAt ?? null)}</td>
                       <td className="action-col">
-                        <a className="view-link" href={timelineUrl(job.id)} target="_blank" rel="noreferrer">
+                        <a className="view-link" href={jobUrl(job.id)}>
                           View
                         </a>
                       </td>

@@ -59,18 +59,27 @@ const now = new Date()
 // ---------------------------------------------------------------------------
 async function seedRecoveredOneClick() {
   const paymentId = 'pay_demo_recovered_1499'
+  const failedAt = new Date(now.getTime() - 30 * 60 * 1000)
+  const jobCreatedAt = new Date(now.getTime() - 29 * 60 * 1000)
+  const decisionAt = new Date(now.getTime() - 28 * 60 * 1000)
+  const messageAt = new Date(now.getTime() - 27 * 60 * 1000)
+  const capturedAt = new Date(now.getTime() - 26 * 60 * 1000)
+  const ledgerAt = new Date(capturedAt.getTime() + 1000)
   const payment = await prisma.failedPayment.upsert({
     where: { razorpayPaymentId: paymentId },
     update: {
       amount: new Prisma.Decimal(1499),
-      isPaid: false,
+      isPaid: true,
+      paidAt: capturedAt,
+      createdAt: failedAt,
     },
     create: {
       razorpayPaymentId: paymentId,
       razorpayOrderId: 'order_demo_recovered_1499',
       amount: new Prisma.Decimal(1499),
       currency: 'INR',
-      isPaid: false,
+      isPaid: true,
+      paidAt: capturedAt,
       failureCode: 'insufficient_funds',
       failureReason: 'Insufficient balance in account',
       failureSource: 'payment',
@@ -79,15 +88,22 @@ async function seedRecoveredOneClick() {
       customerEmail: 'demo.customer@example.com',
       customerName: 'Aarav Sharma',
       rawPayload: { entity: { id: paymentId, amount: 149900 } },
+      createdAt: failedAt,
     },
   })
 
   const jobId = stableUuid('seed:job:recovered-1499')
-  const recoveredAt = new Date(now.getTime() - 26 * 60 * 60 * 1000) // recovered yesterday
+  const recoveredAt = capturedAt
 
   await prisma.recoveryJob.upsert({
     where: { id: jobId },
-    update: { status: 'recovered', failureType: 'soft' },
+    update: {
+      status: 'recovered',
+      failureType: 'soft',
+      createdAt: jobCreatedAt,
+      paymentLinkId: 'plink_demo_recovered_1499',
+      paymentLinkUrl: 'https://rzp.io/l/demo1499',
+    },
     create: {
       id: jobId,
       failedPaymentId: payment.id,
@@ -96,12 +112,15 @@ async function seedRecoveredOneClick() {
       followUpCount: 1,
       maxFollowUps: 2,
       priority: 75,
+      paymentLinkId: 'plink_demo_recovered_1499',
+      paymentLinkUrl: 'https://rzp.io/l/demo1499',
+      createdAt: jobCreatedAt,
     },
   })
 
   await prisma.agentDecision.upsert({
     where: { id: stableUuid('seed:decision:recovered-1499') },
-    update: {},
+    update: { createdAt: decisionAt },
     create: {
       id: stableUuid('seed:decision:recovered-1499'),
       recoveryJobId: jobId,
@@ -110,12 +129,13 @@ async function seedRecoveredOneClick() {
       confidence: 0.94,
       modelVersion: 'seed',
       actionPayload: { template: 'recovery_link_v1', urgency: 'medium' },
+      createdAt: decisionAt,
     },
   })
 
   await prisma.message.upsert({
     where: { id: stableUuid('seed:message:recovered-1499') },
-    update: {},
+    update: { templateName: 'payment_recovery_v2', status: 'delivered', sentAt: messageAt, createdAt: messageAt },
     create: {
       id: stableUuid('seed:message:recovered-1499'),
       recoveryJobId: jobId,
@@ -123,14 +143,16 @@ async function seedRecoveredOneClick() {
       toPhone: '+919876000111',
       messageBody:
         'Hi Aarav! Your payment of ₹1,499 failed due to low balance. Tap here to complete it safely — the link expires in 24h: https://rzp.io/l/demo1499',
+      templateName: 'payment_recovery_v2',
       status: 'delivered',
-      sentAt: new Date(now.getTime() - 28 * 60 * 60 * 1000),
+      sentAt: messageAt,
+      createdAt: messageAt,
     },
   })
 
   await prisma.recoveryLedger.upsert({
     where: { id: stableUuid('seed:ledger:recovered-1499') },
-    update: {},
+    update: { amount: payment.amount, status: 'recovered', recoveryMethod: 'one_click', recoveredAt: recoveredAt, createdAt: ledgerAt },
     create: {
       id: stableUuid('seed:ledger:recovered-1499'),
       recoveryJobId: jobId,
@@ -139,12 +161,13 @@ async function seedRecoveredOneClick() {
       status: 'recovered',
       recoveryMethod: 'one_click',
       recoveredAt,
+      createdAt: ledgerAt,
     },
   })
 
   await prisma.auditLog.upsert({
     where: { id: stableUuid('seed:audit:recovered-1499') },
-    update: {},
+    update: { createdAt: new Date(ledgerAt.getTime() + 1000) },
     create: {
       id: stableUuid('seed:audit:recovered-1499'),
       entityType: 'recovery_jobs',
@@ -153,10 +176,11 @@ async function seedRecoveredOneClick() {
       oldValue: { status: 'waiting' },
       newValue: { status: 'recovered', reason: 'Customer completed one-click recovery link' },
       performedBy: 'recovery_worker',
+      createdAt: new Date(ledgerAt.getTime() + 1000),
     },
   })
 
-  return { jobId, amount: 1499 }
+  return { jobId, publicId: 'job_8f91a2', amount: 1499 }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,9 +188,12 @@ async function seedRecoveredOneClick() {
 // ---------------------------------------------------------------------------
 async function seedHardStopped() {
   const paymentId = 'pay_demo_hard_stopped'
+  const failedAt = new Date(now.getTime() - 20 * 60 * 1000)
+  const jobCreatedAt = new Date(now.getTime() - 19 * 60 * 1000)
+  const stoppedAt = new Date(now.getTime() - 18 * 60 * 1000)
   const payment = await prisma.failedPayment.upsert({
     where: { razorpayPaymentId: paymentId },
-    update: { isPaid: false },
+    update: { isPaid: false, paidAt: null, createdAt: failedAt },
     create: {
       razorpayPaymentId: paymentId,
       razorpayOrderId: 'order_demo_hard_stopped',
@@ -181,13 +208,14 @@ async function seedHardStopped() {
       customerEmail: 'demo.customer2@example.com',
       customerName: 'Priya Nair',
       rawPayload: { entity: { id: paymentId, amount: 749900 } },
+      createdAt: failedAt,
     },
   })
 
   const jobId = stableUuid('seed:job:hard-stopped')
   await prisma.recoveryJob.upsert({
     where: { id: jobId },
-    update: { status: 'unrecovered', failureType: 'hard' },
+    update: { status: 'unrecovered', failureType: 'hard', createdAt: jobCreatedAt },
     create: {
       id: jobId,
       failedPaymentId: payment.id,
@@ -196,37 +224,43 @@ async function seedHardStopped() {
       followUpCount: 0,
       maxFollowUps: 2,
       priority: 60,
+      createdAt: jobCreatedAt,
     },
   })
 
   // NO message — hard failures are never contacted.
   await prisma.recoveryLedger.upsert({
     where: { id: stableUuid('seed:ledger:hard-stopped') },
-    update: {},
+    update: { amount: payment.amount, status: 'unrecovered', recoveryMethod: null, createdAt: stoppedAt },
     create: {
       id: stableUuid('seed:ledger:hard-stopped'),
       recoveryJobId: jobId,
       failedPaymentId: payment.id,
       amount: payment.amount,
       status: 'unrecovered',
+      createdAt: stoppedAt,
     },
   })
 
   await prisma.auditLog.upsert({
     where: { id: stableUuid('seed:audit:hard-stopped') },
-    update: {},
+    update: {
+      createdAt: stoppedAt,
+      newValue: { status: 'unrecovered', reason: 'Hard failure — card blocked, retry will not help. No outreach.' },
+    },
     create: {
       id: stableUuid('seed:audit:hard-stopped'),
       entityType: 'recovery_jobs',
       entityId: jobId,
       action: 'stop_unrecovered',
       oldValue: { status: 'pending' },
-      newValue: { status: 'unrecovered', reason: 'Hard failure — card blocked, retry will not help. No message sent.' },
+      newValue: { status: 'unrecovered', reason: 'Hard failure — card blocked, retry will not help. No outreach.' },
       performedBy: 'stopping_rules',
+      createdAt: stoppedAt,
     },
   })
 
-  return { jobId, amount: 7499 }
+  return { jobId, publicId: 'job_3c72b1', amount: 7499 }
 }
 
 // ---------------------------------------------------------------------------
@@ -400,8 +434,8 @@ async function main() {
   }
 
   const rows = [
-    ['recovered one-click', recovered.jobId, `₹${recovered.amount}`],
-    ['hard stopped (no message)', hard.jobId, `₹${hard.amount}`],
+    ['recovered one-click', recovered.publicId, `₹${recovered.amount}`],
+    ['hard stopped (no message)', hard.publicId, `₹${hard.amount}`],
     ['HITL pending high value', hitl.jobId, `₹${hitl.amount}`],
     ['waiting follow-up', waiting.jobId, `₹${waiting.amount}`],
   ]
