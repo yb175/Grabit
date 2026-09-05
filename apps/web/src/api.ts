@@ -32,9 +32,27 @@ export interface Job {
   status: string
   failureType: string
   amount: number
+  currency: string
   createdAt: string
   updatedAt: string
+  followUpCount: number
+  maxFollowUps: number
+  paidAt: string | null
+  isPaid: boolean
   ledger: LedgerEntry[]
+  messages: unknown[]
+  paymentLinkUrl?: string | null
+}
+
+export interface TimelineEvent {
+  id: string
+  type: 'ingested' | 'rule_decision' | 'agent_decision' | 'hitl' | 'action' | 'message' | 'captured' | 'ledger' | 'audit'
+  title: string
+  description?: string
+  reason?: string | null
+  performedBy?: string | null
+  timestamp: string
+  data?: Record<string, unknown>
 }
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -56,7 +74,16 @@ export async function fetchJobs(signal?: AbortSignal): Promise<Job[]> {
   return data.jobs
 }
 
-// The View link in the table opens the job timeline (JSON).
-export function timelineUrl(jobId: string): string {
-  return `${API_URL}/jobs/${jobId}/timeline`
+export function jobUrl(jobId: string): string {
+  return `#/jobs/${encodeURIComponent(jobId)}`
+}
+
+export function fetchJob(jobId: string, signal?: AbortSignal): Promise<Job> {
+  return getJson<{ job: Job }>(`/jobs/${encodeURIComponent(jobId)}`, signal).then((data) => data.job)
+}
+
+export function fetchTimeline(jobId: string, signal?: AbortSignal): Promise<TimelineEvent[]> {
+  return getJson<{ timeline: TimelineEvent[] }>(`/jobs/${encodeURIComponent(jobId)}/timeline`, signal).then(
+    (data) => data.timeline,
+  )
 }

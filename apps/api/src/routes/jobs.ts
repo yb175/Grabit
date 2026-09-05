@@ -20,6 +20,17 @@ const app = new Hono()
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+// Demo aliases keep the human-readable buildathon URLs stable without adding
+// a display-id column to the schema. The values match scripts/seed.ts.
+const DEMO_JOB_ALIASES: Record<string, string> = {
+  job_8f91a2: 'bf8a451d-b989-54d6-a77d-89856fa3c2e9',
+  job_3c72b1: '3e974a21-f8be-5376-95da-26dcf3d9ac8e',
+}
+
+function resolveJobId(id: string): string {
+  return DEMO_JOB_ALIASES[id] ?? id
+}
+
 function isValidUuid(id: string): boolean {
   return UUID_REGEX.test(id)
 }
@@ -50,12 +61,16 @@ function formatJob(job: any) {
     failureReason: payment?.failureReason ?? null,
     failureSource: payment?.failureSource ?? null,
     razorpayPaymentId: payment?.razorpayPaymentId ?? null,
+    isPaid: payment?.isPaid ?? false,
+    paidAt: payment?.paidAt ?? null,
     failedPayment: payment ? { ...payment, rawPayload: undefined } : null,
     decisions: job.decisions ?? [],
     latestDecision: job.decisions?.[0] ?? null,
     messages: job.messages ?? [],
     hitlTasks: job.hitlTasks ?? [],
     latestHitlTask: job.hitlTasks?.[0] ?? null,
+    paymentLinkId: job.paymentLinkId,
+    paymentLinkUrl: job.paymentLinkUrl,
     ledger: job.ledger ?? [],
     latestLedger: job.ledger?.[0] ?? null,
   }
@@ -122,10 +137,11 @@ app.get('/', async (c) => {
 
 // GET /jobs/:id/timeline — full chronological timeline of events for a recovery job
 app.get('/:id/timeline', async (c) => {
-  const id = c.req.param('id')
+  const requestedId = c.req.param('id')
+  const id = resolveJobId(requestedId)
 
   if (!isValidUuid(id)) {
-    return c.json({ error: 'not_found', message: `Job ${id} not found` }, 404)
+    return c.json({ error: 'not_found', message: `Job ${requestedId} not found` }, 404)
   }
 
   const job = await prisma.recoveryJob.findUnique({
@@ -163,7 +179,7 @@ app.get('/:id/timeline', async (c) => {
 
   interface TimelineEvent {
     id: string
-    type: 'ingested' | 'rule_decision' | 'agent_decision' | 'hitl' | 'message' | 'ledger' | 'audit'
+    type: 'ingested' | 'rule_decision' | 'agent_decision' | 'hitl' | 'action' | 'message' | 'captured' | 'ledger' | 'audit'
     title: string
     description?: string
     reason?: string | null
@@ -197,7 +213,18 @@ app.get('/:id/timeline', async (c) => {
     },
   })
 
-  // 2. Audit logs / Rule Decisions
+  // 2. Job creation is a real state transition even when no audit row exists.
+  events.push({
+    id: `created-${job.id}`,
+    type: 'audit',
+    title: 'Recovery job created',
+    description: 'failed_payments row + recovery_jobs row',
+    performedBy: 'ingest_worker',
+    timestamp: job.createdAt.toISOString(),
+    data: { failedPaymentId: job.failedPaymentId, recoveryJobId: job.id },
+  })
+
+  // 3. Audit logs / Rule Decisions
   for (const log of auditLogs) {
     const newVal = (log.newValue as Record<string, unknown>) ?? {}
     const oldVal = (log.oldValue as Record<string, unknown>) ?? {}
@@ -279,7 +306,22 @@ app.get('/:id/timeline', async (c) => {
     }
   }
 
-  // 3. Agent Decisions
+  // Keep the specialized rule/decision event for the operational story, and
+  // also retain an immutable audit event for the audit stage in the UI.
+  for (const log of auditLogs) {
+    const newVal = (log.newValue as Record<string, unknown>) ?? {}
+    events.push({
+      id: `audit-${log.id}`,
+      type: 'audit',
+      title: `Audit: ${log.action}`,
+      description: (newVal.reason as string) ?? undefined,
+      performedBy: log.performedBy,
+      timestamp: log.createdAt.toISOString(),
+      data: { action: log.action, oldValue: log.oldValue, newValue: log.newValue },
+    })
+  }
+
+  // 4. Agent Decisions
   for (const d of job.decisions) {
     events.push({
       id: d.id,
@@ -299,7 +341,7 @@ app.get('/:id/timeline', async (c) => {
     })
   }
 
-  // 4. HITL Tasks
+  // 5. HITL Tasks
   for (const h of job.hitlTasks) {
     const exists = events.some((e) => e.type === 'hitl' && e.reason === h.reason)
     if (!exists) {
@@ -340,7 +382,23 @@ app.get('/:id/timeline', async (c) => {
     }
   }
 
-  // 5. Messages
+  // 6. A one-click decision creates a payment link before the message is
+  // queued. The link fields already live on recovery_jobs; no new table or
+  // timestamp is needed.
+  const oneClickDecision = job.decisions.find((d) => d.decisionType === 'one_click')
+  if (job.paymentLinkId && oneClickDecision) {
+    events.push({
+      id: `payment-link-${job.id}`,
+      type: 'action',
+      title: 'Payment link created',
+      description: 'Razorpay payment link',
+      performedBy: 'payment_link_service',
+      timestamp: oneClickDecision.createdAt.toISOString(),
+      data: { paymentLinkId: job.paymentLinkId },
+    })
+  }
+
+  // 7. Messages
   for (const m of job.messages) {
     events.push({
       id: m.id,
@@ -363,7 +421,25 @@ app.get('/:id/timeline', async (c) => {
     })
   }
 
-  // 6. Recovery Ledger
+  // 8. Payment capture is the recovery authority, not an AI decision or
+  // message delivery. Derive it from the existing failed_payments fields.
+  if (job.failedPayment.isPaid && job.failedPayment.paidAt) {
+    events.push({
+      id: `captured-${job.failedPayment.id}`,
+      type: 'captured',
+      title: 'Payment captured',
+      description: `payment.captured webhook, ₹${job.failedPayment.amount}`,
+      performedBy: 'gateway',
+      timestamp: job.failedPayment.paidAt.toISOString(),
+      data: {
+        razorpayPaymentId: job.failedPayment.razorpayPaymentId,
+        amount: Number(job.failedPayment.amount),
+        paidAt: job.failedPayment.paidAt,
+      },
+    })
+  }
+
+  // 9. Recovery Ledger
   for (const l of job.ledger) {
     events.push({
       id: l.id,
@@ -396,10 +472,11 @@ app.get('/:id/timeline', async (c) => {
 
 // GET /jobs/:id — single recovery job detail
 app.get('/:id', async (c) => {
-  const id = c.req.param('id')
+  const requestedId = c.req.param('id')
+  const id = resolveJobId(requestedId)
 
   if (!isValidUuid(id)) {
-    return c.json({ error: 'not_found', message: `Job ${id} not found` }, 404)
+    return c.json({ error: 'not_found', message: `Job ${requestedId} not found` }, 404)
   }
 
   const job = await prisma.recoveryJob.findUnique({

@@ -1,19 +1,47 @@
+import { useEffect, useState } from 'react'
 import { AppShell } from './components/AppShell'
 import { CommandView } from './pages/CommandView'
+import { JobTimeline } from './pages/JobTimeline'
 
-// Single page today; the shell (header + footer) is shared, so future pages
-// (timeline, HITL inbox) swap only the children + nav.
-export default function App() {
+interface Route {
+  kind: 'command' | 'job'
+  jobId?: string
+}
+
+function readRoute(): Route {
+  const raw = window.location.hash.replace(/^#/, '') || window.location.pathname
+  const match = raw.match(/^\/jobs\/([^/?#]+)\/?$/)
+  return match ? { kind: 'job', jobId: decodeURIComponent(match[1]) } : { kind: 'command' }
+}
+
+function Header({ route }: { route: Route }) {
+  const page = route.kind
   return (
     <AppShell
-      nav={[{ label: 'Command View', href: '#/command-view', active: true }]}
-      context={
-        <span className="merchant-chip">
-          rzp_test <span className="sep">·</span> Last 30 days
-        </span>
-      }
+      nav={[
+        { label: 'Command View', href: '#/command-view', active: page === 'command' },
+        { label: 'Job Timeline', href: '#/jobs/job_8f91a2', active: page === 'job' },
+      ]}
+      context={<span className="console-context">Operations Console</span>}
+      footer={page === 'job' ? null : undefined}
     >
-      <CommandView />
+      {page === 'job' && route.jobId ? <JobTimeline requestedId={route.jobId} /> : <CommandView />}
     </AppShell>
   )
+}
+
+export default function App() {
+  const [route, setRoute] = useState<Route>(readRoute)
+
+  useEffect(() => {
+    const update = () => setRoute(readRoute())
+    window.addEventListener('hashchange', update)
+    window.addEventListener('popstate', update)
+    return () => {
+      window.removeEventListener('hashchange', update)
+      window.removeEventListener('popstate', update)
+    }
+  }, [])
+
+  return <Header route={route} />
 }
