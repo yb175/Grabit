@@ -52,52 +52,6 @@ Grabit closes the loop:
 
 The architecture is built around an event-driven, decoupled pipeline designed for high-throughput webhook ingestion, deterministic rule evaluation, AI-driven recovery messaging, and recovery ledger + audit logging.
 
-```
-+---------------------------------------------------------------------------------------------------+
-|                                      EXTERNAL ACTORS & APIS                                       |
-|  +--------------------+         +-----------------------+         +----------------------------+  |
-|  |  Razorpay Webhooks |         | Customer (WhatsApp)   |         | Merchant Ops (Dashboard)   |  |
-|  +---------+----------+         +-----------^-----------+         +-------------^--------------+  |
-+------------|--------------------------------|-----------------------------------|-----------------+
-             | (HMAC-SHA256 Signed)           | (One-click Link / Re-auth)        | (REST / Review)
-             v                                |                                   v
-+---------------------------------------------------------------------------------------------------+
-| INGESTION & API GATEWAY (Hono + TypeScript)                                                       |
-|   /webhooks/razorpay  •  /api/hitl  •  /api/ledger  •  /api/dashboard  •  /health                 |
-|   - Signature verification + payload parsing/casting                                             |
-|   - Currency normalization (Paise -> INR Decimal)                                                 |
-|   - Enqueue to BullMQ Ingest Queue                                                                |
-+---------------------------------------------+-----------------------------------------------------+
-                                              |
-                                              v
-+---------------------------------------------------------------------------------------------------+
-| ASYNCHRONOUS PROCESSING PIPELINE (BullMQ + Redis 6380)                                            |
-|                                                                                                   |
-|  +-----------------------+      +--------------------------+      +----------------------------+  |
-|  |   1. Ingest Worker    | ---> |    2. Recovery Worker    | ---> |    3. AI Agent Service (planned) |  |
-|  |   - Dedupe & Normalize|      |   - Stopping Rules Gate  |      |   (Python/Agno/FastAPI)    |  |
-|  |   - Create Failure &  |      |   - Quiet Hours (IST)    |      |   - Failure Diagnosis      |  |
-|  |     Recovery Job      |      |   - Salary Window Check  |      |   - Hinglish Copy Gen      |  |
-|  +-----------------------+      +-------------+------------+      +-------------+--------------+  |
-|                                               |                                 |                 |
-|                                 +-------------+------------+                    v                 |
-|                                 |                          |      +----------------------------+  |
-|                                 v                          v      |     4. Message Worker      |  |
-|                     +-----------------------+  +----------------+ |   - WhatsApp Dispatch      |  |
-|                     |     5. HITL Worker    |  | Followup Worker| |   - Delivery Tracking      |  |
-|                     |  - High Value (>=10k) |  | - Smart Delays | +----------------------------+  |
-|                     |  - Low Confidence     |  | - Backoff Loop |                                 |
-|                     +-----------------------+  +----------------+                                 |
-+---------------------------------------------+-----------------------------------------------------+
-                                              |
-                                              v
-+---------------------------------------------------------------------------------------------------+
-| PERSISTENCE & DATA LAYER (PostgreSQL 5433 + Prisma ORM)                                           |
-|   • failed_payments   • recovery_jobs    • recovery_messages                                      |
-|   • hitl_tasks        • recovery_ledger  • audit_logs                                             |
-+---------------------------------------------------------------------------------------------------+
-```
-
 ![Architecture Diagram](./docs/architecture.png)
 
 ---
